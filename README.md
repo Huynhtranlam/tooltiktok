@@ -9,6 +9,8 @@ Mỗi người tải hoặc clone mã nguồn về **máy của mình** rồi ch
 3. Ứng dụng tự chọn cổng trống từ 8001 đến 8099 rồi mở cửa sổ của nó (trên Windows có Edge, nó mở trong cửa sổ app riêng). Địa chỉ chính xác hiện trong cửa sổ chạy. Bạn vào thẳng ứng dụng, không cần tài khoản hay mật khẩu.
 4. Giữ cửa sổ chạy ứng dụng mở khi sử dụng. Muốn dừng, đóng cửa sổ đó. Lần sau chỉ cần nhấp đúp `start-local.cmd`.
 
+Nếu chép thư mục source từ máy khác, không cần chép `.venv/`: môi trường Python trong đó có thể trỏ tới đường dẫn chỉ tồn tại trên máy cũ. Bản `start-local.cmd` mới tự kiểm tra và tạo lại `.venv` khi Python trong đó không chạy được. Nếu máy chưa có Python 3.12+, hãy cài Python trước; nếu bước cài thư viện thất bại, xem lỗi `pip` hiển thị ngay phía trên thông báo cuối để phân biệt lỗi mạng, quyền ghi và đường dẫn.
+
 Ứng dụng chỉ nghe trên `127.0.0.1`, tức chính máy này. Nó không gửi dữ liệu đến máy của người khác. `index.html` phải được mở qua địa chỉ trên; mở trực tiếp bằng `file://` hoặc GitHub Pages sẽ không kết nối được SQLite.
 
 Khi cập nhật mã bằng `git pull`, thư mục `data/` và `.venv/` vẫn nằm trên máy và bị Git bỏ qua. Clone sang một thư mục/máy khác sẽ tạo cơ sở dữ liệu mới ở nơi đó. Không copy thư mục `data/` vào GitHub.
