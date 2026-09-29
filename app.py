@@ -1,4 +1,4 @@
-"""Shared TikTok Live order attribution server (one database for all devices)."""
+"""Local TikTok Live order attribution server (one SQLite database per install)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from domain import classify, parse_csv, report, validate_day_shifts, validate_schedule
+from portable import export_data, inspect_data, restore_data
 from storage import (
     all_orders, audit, backup_if_due, close_db, current_schedule,
     get_db, init_db, make_backup, manual_map, now, rate_map,
@@ -32,7 +33,7 @@ def create_app(test_config: dict | None = None) -> Flask:
         SECRET_KEY=os.environ.get("TOOLTIKTOK_SECRET_KEY") or secrets.token_hex(32),
         DATABASE_PATH=str(data_dir / "tooltiktok.sqlite3"),
         BACKUP_DIR=str(data_dir / "backups"),
-        MAX_CONTENT_LENGTH=26 * 1024 * 1024,
+        MAX_CONTENT_LENGTH=105 * 1024 * 1024,
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         SESSION_COOKIE_SECURE=os.environ.get("TOOLTIKTOK_COOKIE_SECURE") == "1",
@@ -65,13 +66,13 @@ def create_app(test_config: dict | None = None) -> Flask:
             abort(400, "Dữ liệu gửi lên không hợp lệ.")
         return value
 
-    def uploaded_bytes():
+    def uploaded_bytes(max_mb: int = 25):
         file = request.files.get("file")
         if not file:
             abort(400, "Chọn file trước khi tiếp tục.")
-        raw = file.read(25 * 1024 * 1024 + 1)
-        if len(raw) > 25 * 1024 * 1024:
-            abort(413, "File vượt 25 MB.")
+        raw = file.read(max_mb * 1024 * 1024 + 1)
+        if len(raw) > max_mb * 1024 * 1024:
+            abort(413, f"File vượt {max_mb} MB.")
         return file.filename or "upload", raw
 
     def staff_list():
@@ -486,16 +487,27 @@ def create_app(test_config: dict | None = None) -> Flask:
     @app.get("/api/backup")
     def backup_export():
         admin()
-        db = get_db()
-        snapshot = {
-            "format": "tooltiktok-shared-v1", "exportedAt": now(),
-            "staff": staff_list(), "schedule": current_schedule(db),
-            "rates": rate_map(db), "orders": all_orders(db), "manual": manual_map(db),
-            "closures": [dict(r) for r in db.execute("SELECT id,start_day,end_day,snapshot,closed_at,reopened_at FROM payroll_closures")],
-        }
-        response = jsonify(snapshot)
-        response.headers["Content-Disposition"] = f"attachment; filename=tooltiktok-backup-{date.today().isoformat()}.json"
+        response = jsonify(export_data(get_db()))
+        response.headers["Content-Disposition"] = f"attachment; filename=liveledger-data-{date.today().isoformat()}.json"
         return response
+
+    @app.post("/api/backup/preview")
+    def preview_portable_backup():
+        admin()
+        _, raw = uploaded_bytes(100)
+        _, summary = inspect_data(raw, get_db())
+        return jsonify(summary)
+
+    @app.post("/api/backup/commit")
+    def commit_portable_backup():
+        actor = admin()
+        _, raw = uploaded_bytes(100)
+        if request.form.get("sha256") != hashlib.sha256(raw).hexdigest():
+            abort(409, "File đã thay đổi sau khi xem trước. Hãy xem trước lại.")
+        payload, summary = inspect_data(raw, get_db())
+        make_backup(Path(app.config["DATABASE_PATH"]), Path(app.config["BACKUP_DIR"]))
+        restore_data(get_db(), payload, actor["id"])
+        return jsonify({"ok": True, "orders": summary["orders"], "periods": summary["periods"]})
 
     @app.post("/api/backup/server")
     def server_backup():

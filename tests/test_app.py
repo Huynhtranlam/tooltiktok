@@ -195,3 +195,96 @@ def test_legacy_overnight_schedule_can_replace_initial(shared):
     schedule = client.get("/api/state").json["schedule"]
     assert len(schedule["periods"]) == 1
     assert schedule["periods"][0]["shifts"][0]["endDay"] == 1
+
+
+def test_portable_export_restores_business_data_to_an_independent_install(shared, tmp_path):
+    source = shared.test_client(); source_headers = login(source)
+    assert source.post("/api/staff", json={"name":"AN"}, headers=source_headers).status_code == 201
+    assert source.post("/api/rates", json={"staffId":5,"effectiveFrom":"2026-09-01","rate":10}, headers=source_headers).status_code == 200
+    assert source.post("/api/rates", json={"staffId":6,"effectiveFrom":"2026-09-01","rate":5}, headers=source_headers).status_code == 200
+    csv_data = sample_csv(
+        "LIVE-1,20/09/2026 22:30:00,Product A,1,100000,Open,LIVE,0",
+        "LIVE-2,20/09/2026 09:00:00,Product B,1,100000,Open,LIVE,0",
+    )
+    sha = upload(source,"/api/import/preview",csv_data,source_headers).json["sha256"]
+    assert upload(source,"/api/import/commit",csv_data,source_headers,sha256=sha).status_code == 200
+    assert source.put("/api/manual/LIVE-2",json={"staffId":6,"reason":"Ca thay đổi"},headers=source_headers).status_code == 200
+    closed = source.post("/api/payroll/close",json={"from":"2026-09-20","to":"2026-09-20"},headers=source_headers)
+    assert closed.status_code == 201
+    exported = source.get("/api/backup")
+    assert exported.status_code == 200
+    assert exported.json["format"] == "tooltiktok-local-v1"
+    assert "users" not in exported.json and "password_hash" not in exported.get_data(as_text=True)
+
+    target_app = create_app({"TESTING":True,"SECRET_KEY":"different-local-secret",
+                             "DATABASE_PATH":str(tmp_path / "second-install" / "tooltiktok.sqlite3"),
+                             "BACKUP_DIR":str(tmp_path / "second-install" / "backups")})
+    with target_app.app_context():
+        db = get_db()
+        with db:
+            db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
+                       ("local",generate_password_hash("local-admin-password"),"admin",now()))
+    target = target_app.test_client()
+    signed_in = target.post("/api/login",json={"username":"local","password":"local-admin-password"})
+    target_headers = {"X-CSRF-Token":signed_in.json["csrf"]}
+    assert target.post("/api/staff",json={"name":"JUNK"},headers=target_headers).status_code == 201
+    raw = exported.data
+    preview = upload(target,"/api/backup/preview",raw,target_headers)
+    assert preview.status_code == 200 and preview.json["orders"] == 2 and preview.json["closures"] == 1
+    assert upload(target,"/api/backup/commit",raw,target_headers,sha256="wrong").status_code == 409
+    restored = upload(target,"/api/backup/commit",raw,target_headers,sha256=preview.json["sha256"])
+    assert restored.status_code == 200, restored.json
+    target_state = target.get("/api/state").json
+    assert target_state["orderCount"] == 2
+    assert any(person["name"] == "AN" for person in target_state["staff"])
+    assert not any(person["name"] == "JUNK" for person in target_state["staff"])
+    assert target.get("/api/users").json[0]["username"] == "local"
+    report = target.get("/api/report?from=2026-09-20&to=2026-09-20").json
+    assert report["totals"]["orders"] == 2
+    assert report["totals"]["commission"] == 15000
+    assert target.get(f"/api/payroll/{closed.json['id']}").json["snapshot"]["totals"]["commission"] == 15000
+    assert list((tmp_path / "second-install" / "backups").glob("*.sqlite3"))
+
+
+def test_portable_preview_rejects_broken_rates_without_touching_data(shared):
+    client = shared.test_client(); headers = login(client)
+    exported = client.get("/api/backup").json
+    exported["rates"][0]["rate"] = 999
+    raw = json.dumps(exported).encode()
+    result = upload(client,"/api/backup/preview",raw,headers)
+    assert result.status_code == 400
+    assert client.get("/api/state").json["orderCount"] == 0
+
+
+def test_backup_from_previous_server_release_can_be_previewed(shared):
+    client = shared.test_client(); headers = login(client)
+    current = client.get("/api/backup").json
+    old = {"format":"tooltiktok-shared-v1","exportedAt":current["exportedAt"],
+           "staff":current["staff"],"schedule":current["schedule"],
+           "rates":{},"orders":current["orders"],"manual":{},"closures":[]}
+    for item in current["rates"]:
+        old["rates"].setdefault(str(item["staffId"]),[]).append(
+            {"effectiveFrom":item["effectiveFrom"],"rate":item["rate"]})
+    raw = json.dumps(old).encode()
+    preview = upload(client,"/api/backup/preview",raw,headers)
+    assert preview.status_code == 200 and preview.json["periods"] == 3
+
+
+def test_local_launcher_keeps_the_machine_secret_and_admin(tmp_path, monkeypatch):
+    import local
+
+    monkeypatch.setattr(local, "DATA_DIR", tmp_path / "private-data")
+    monkeypatch.delenv("TOOLTIKTOK_SECRET_KEY", raising=False)
+    monkeypatch.delenv("TOOLTIKTOK_DATA_DIR", raising=False)
+    local.prepare_environment()
+    first_secret = (local.DATA_DIR / ".secret-key").read_text()
+    local.prepare_environment()
+    assert (local.DATA_DIR / ".secret-key").read_text() == first_secret
+    passwords = iter(["local-admin-password", "local-admin-password"])
+    monkeypatch.setattr(local.getpass, "getpass", lambda _prompt: next(passwords))
+    app = create_app({"TESTING":True,"DATABASE_PATH":str(local.DATA_DIR / "tooltiktok.sqlite3"),
+                      "BACKUP_DIR":str(local.DATA_DIR / "backups")})
+    local.create_first_admin(app)
+    local.create_first_admin(app)
+    client = app.test_client()
+    assert client.post("/api/login",json={"username":"admin","password":"local-admin-password"}).status_code == 200

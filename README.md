@@ -1,70 +1,52 @@
-# LiveLedger — phân ca đơn live TikTok
+# LiveLedger — phân ca đơn live TikTok trên từng máy
 
-Ứng dụng nhiều máy cho lịch livestream, nhập CSV đơn hàng, đối soát đơn theo giờ tạo và chốt hoa hồng. Mọi trình duyệt truy cập **cùng một địa chỉ máy chủ** và dùng chung một cơ sở dữ liệu SQLite trên máy chủ. Mã nguồn trên GitHub không chứa dữ liệu đơn hàng.
+Mỗi người tải hoặc clone mã nguồn về **máy của mình** rồi chạy riêng. Mỗi bản cài có file SQLite riêng trong `data/tooltiktok.sqlite3`; sửa lịch hoặc nhập đơn trên máy A không tự thay dữ liệu máy B. GitHub chỉ chứa mã nguồn, không chứa dữ liệu đơn hàng. Khi cần chuyển trạng thái hoặc tái hiện lỗi, dùng **Thiết lập → Xuất dữ liệu JSON** rồi nhập file đó ở bản cài khác.
 
-## Chạy thử trên một máy
+## Bắt đầu trên Windows
 
-Cần Python 3.12+. Trong PowerShell:
+1. Cài Python 3.12 trở lên và tải/clone repository này vào một thư mục có quyền ghi.
+2. Nhấp đúp `start-local.cmd`. Lần đầu cần Internet để cài Flask và Waitress; ứng dụng tạo thư mục `.venv` và `data` riêng trên máy này.
+3. Lần đầu chạy, đặt mật khẩu cho tài khoản `admin` (ít nhất 12 ký tự). Trình duyệt sẽ mở `http://127.0.0.1:8000/`.
+4. Giữ cửa sổ chạy ứng dụng mở khi sử dụng. Lần sau chỉ cần nhấp đúp `start-local.cmd` và đăng nhập.
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-$env:TOOLTIKTOK_SECRET_KEY = python -c "import secrets;print(secrets.token_hex(32))"
-python app.py init-admin --username owner
-python app.py serve --host 127.0.0.1 --port 8000
-```
+Ứng dụng chỉ nghe trên `127.0.0.1`, tức chính máy này. Nó không gửi dữ liệu đến máy của người khác. `index.html` phải được mở qua địa chỉ trên; mở trực tiếp bằng `file://` hoặc GitHub Pages sẽ không kết nối được SQLite.
 
-Mở `http://127.0.0.1:8000/` và đăng nhập bằng tài khoản vừa tạo. Giữ nguyên `TOOLTIKTOK_SECRET_KEY` qua mỗi lần chạy bằng biến môi trường của máy chủ; đổi khóa sẽ làm các phiên đăng nhập cũ hết hiệu lực. Thư mục `data/` giữ cơ sở dữ liệu và bản sao lưu; không đưa thư mục này lên GitHub.
+Khi cập nhật mã bằng `git pull`, thư mục `data/` và `.venv/` vẫn nằm trên máy và bị Git bỏ qua. Clone sang một thư mục/máy khác sẽ tạo cơ sở dữ liệu mới ở nơi đó. Không copy thư mục `data/` vào GitHub.
 
-**Không mở `index.html` trực tiếp bằng `file://` ở phiên bản mới.** Trang mới phải đi qua máy chủ để các máy cùng thấy một lịch và đơn hàng.
-GitHub chỉ giữ mã nguồn; GitHub Pages không chạy được Python/SQLite của bản dùng chung. Sau khi đẩy mã lên GitHub vẫn cần chạy máy chủ riêng như phần dưới.
+## Xuất dữ liệu để chuyển máy hoặc tái hiện lỗi
 
-## Đưa lên Internet với HTTPS
+Trên máy có dữ liệu cần chuyển, đăng nhập quản lý rồi vào **Thiết lập → Xuất dữ liệu JSON**. File gồm nhân viên, lịch cố định, lịch đổi ca, tỷ lệ hoa hồng, đơn hàng, gán tay và các kỳ đã chốt. File **không chứa tài khoản hay mật khẩu**. Nó vẫn chứa mã đơn, tên sản phẩm và số tiền; chỉ chia sẻ với người được phép xem dữ liệu kinh doanh.
 
-Cần một máy chủ có Docker, một tên miền trỏ tới máy chủ và cổng 80/443. Sao chép `.env.example` thành `.env`, đặt `DOMAIN` và một `TOOLTIKTOK_SECRET_KEY` ngẫu nhiên dài. Sau đó:
+Ở bản cài khác, vào **Thiết lập → Nhập dữ liệu từ bản cài khác**, chọn file JSON và bấm **Xem trước**. Sau khi xác nhận, ứng dụng thay toàn bộ dữ liệu nghiệp vụ trên máy nhận bằng nội dung file; tài khoản đăng nhập của máy nhận vẫn giữ nguyên. Ứng dụng tạo một bản sao lưu SQLite của máy nhận **trước khi thay**. Vì vậy có thể clone source vào một thư mục thử nghiệm, nhập file của người dùng và tái hiện lỗi mà không đụng cơ sở dữ liệu làm việc của họ.
 
-```bash
-docker compose -f compose.production.yml up -d --build
-docker compose -f compose.production.yml exec app python app.py init-admin --username owner
-```
+Nếu chạy hai bản clone trên cùng một máy, bản thứ hai có thể dùng `start-local.cmd --port 8001` rồi mở `http://127.0.0.1:8001/`. Mỗi thư mục clone vẫn có `data/` riêng.
 
-Caddy cấp HTTPS cho tên miền và chuyển yêu cầu tới ứng dụng. Không công khai cổng 8000 trực tiếp. Dữ liệu nằm trong volume `app_data`; cần sao lưu volume này ra nơi khác. Máy chủ chỉ nên chạy **một bản ứng dụng** dùng một file SQLite. Nếu sau này cần nhiều máy chủ hoặc tải lớn hơn, chuyển cơ sở dữ liệu sang PostgreSQL trước khi nhân bản ứng dụng.
-
-Nếu chỉ chạy trong mạng cửa hàng, có thể dùng một máy chủ nội bộ và truy cập bằng IP của nó. Trên mạng nội bộ tin cậy, chạy `python app.py serve --host 0.0.0.0 --port 8000`; để truy cập qua Internet vẫn cần HTTPS và tên miền như trên.
+Xuất dữ liệu là thao tác thủ công. Các máy không đồng bộ tự động, và nhập cùng một file nhiều lần sẽ thay dữ liệu hiện tại bằng trạng thái trong file.
 
 ## Chuyển dữ liệu từ công cụ HTML cũ
 
-1. Trên **từng máy/trình duyệt đã dùng**, mở đúng file HTML cũ ở đúng địa chỉ trước đây. Vào **Thiết lập → Sao lưu dữ liệu** để tải JSON. File `legacy.html` trong repo là bản mã cũ để đối chiếu, nhưng đổi đường dẫn file có thể không thấy dữ liệu của đường dẫn ban đầu.
-2. Trong LiveLedger mới, đăng nhập quản lý, vào **Thiết lập → Nhập từ công cụ HTML cũ**, chọn JSON và **Xem trước**. Màn hình sẽ báo số đơn trùng với máy chủ.
-3. Nếu lịch trong JSON là lịch muốn dùng, đánh dấu **Thay lịch, lịch riêng và tỷ lệ**. Nếu khoảng lịch thứ ba trước đây chưa lưu được, giữ **bỏ đánh dấu** để dùng ba khoảng đã được khởi tạo từ ảnh 01/09–04/10/2026, rồi kiểm tra từng khoảng trong màn **Lịch live**.
-4. Chuyển lần lượt các bản sao lưu còn lại. Đơn cùng mã sẽ được cập nhật theo file nhập sau; vì vậy cần đối chiếu các file có đơn trùng trước khi hoàn tất. Máy chủ tự tạo bản sao lưu SQLite trước mỗi lần chuyển JSON.
+1. Mở **đúng file HTML cũ ở đúng đường dẫn đã dùng trước đây** trong trình duyệt có dữ liệu. Vào **Thiết lập → Sao lưu dữ liệu** để tải JSON. Đổi đường dẫn file cũ có thể làm trình duyệt không thấy dữ liệu đã lưu. `legacy.html` trong repository chỉ là bản mã cũ để đối chiếu.
+2. Trong LiveLedger trên máy cần dùng, vào **Thiết lập → Chuyển từ công cụ HTML cũ**, chọn JSON và xem trước. Có thể chọn thay lịch/tỷ lệ hoặc chỉ nhập đơn. Nếu khoảng lịch thứ ba ở bản cũ chưa lưu thành công, giữ lịch khởi tạo từ ảnh rồi kiểm tra từng khoảng trong **Lịch live**.
+3. So sánh số đơn, lịch và báo cáo trước khi bỏ bản cũ. Mỗi máy có dữ liệu HTML cũ riêng thì xuất và chuyển riêng.
 
-Đừng xóa dữ liệu ở công cụ cũ cho đến khi đã so sánh số đơn, lịch, tỷ lệ và báo cáo ở máy chủ mới.
+## Quy tắc đang dùng
 
-## Các màn hình và quy tắc
+- Gán đơn theo `Created Time` trong CSV. Giờ kết thúc không thuộc ca: HÀO 21:00–01:00 hôm sau nhận đơn 00:59:59, còn đơn 01:00:00 cần đối soát.
+- Nhập CSV có bước xem trước số đơn mới, đơn cập nhật và dòng sai. File có dòng sai không được ghi. Công cụ chỉ lưu các cột cần tính, không lưu tên, số điện thoại hay địa chỉ khách trong CSV gốc.
+- Lịch có thể chia thành các khoảng ngày. Giờ/phút chọn bằng danh sách 24 giờ và phải chọn rõ kết thúc **Hôm nay** hay **Hôm sau**. Ca chồng giờ và khoảng ngày chồng nhau không được lưu. Lịch riêng một ngày được ưu tiên hơn lịch cố định.
+- Đơn ngoài LIVE hoặc hủy/hoàn không được tính hoa hồng. Đơn LIVE ngoài ca có thể gán tay kèm lý do. Tỷ lệ hoa hồng có ngày hiệu lực; kỳ đã chốt giữ bản kết quả cố định cho đến khi được mở lại có ghi lý do.
+- Báo cáo hoa hồng là số tạm tính. Cần thống nhất quy tắc làm tròn và xử lý hoàn tiền thực tế trước khi dùng làm số chi trả cuối cùng.
 
-- **Tổng quan:** lọc khoảng ngày, xem đơn/sản phẩm/doanh số/hoa hồng, biểu đồ sản phẩm theo nhân viên. Nhập CSV có bước xem trước số đơn mới, đơn cập nhật và dòng lỗi; file có lỗi sẽ không được ghi.
-- **Lịch live:** sửa từng khoảng ngày; chọn nhân viên, giờ và phút bằng danh sách 24 giờ; chọn rõ **Hôm nay/Hôm sau** cho giờ kết thúc. Ca chồng giờ hoặc khoảng ngày chồng nhau không thể lưu. Bản nháp tự lưu trên máy chủ theo tài khoản và có thể mở lại sau khi tải trang.
-- **Đổi ca một ngày:** lịch riêng của ngày đó được ưu tiên hơn lịch cố định, và có thể bỏ để quay về lịch cố định.
-- **Đơn hàng:** xem tất cả đơn và lý do gán. Quản lý có thể sửa gán của đơn LIVE kèm lý do; đơn hủy/hoàn hoặc ngoài LIVE không thể gán hoa hồng.
-- **Hoa hồng:** tỷ lệ có ngày hiệu lực theo ngày tạo đơn. Có thể chốt kỳ khi không còn đơn LIVE chưa gán. Kết quả kỳ đã chốt là bản chụp cố định; mở lại kỳ phải ghi lý do.
-- **Thiết lập:** tạo nhân viên, tài khoản quản lý/chỉ xem, tải bản sao lưu, nhập dữ liệu cũ và xem lịch sử thay đổi.
+## Sao lưu kỹ thuật
 
-Đơn được gán theo cột `Created Time` của CSV, dạng ngày/tháng/năm và giờ:phút[:giây]. Giờ kết thúc ca **không** tính vào ca: HÀO 21:00 hôm nay đến 01:00 hôm sau nhận đơn 00:59:59, còn 01:00:00 ở ngoài ca. Doanh số tạm tính lấy từ `SKU Subtotal After Discount`; hoa hồng tạm tính bằng doanh số của từng dòng nhân tỷ lệ hiệu lực. Đơn có trạng thái hủy/hoàn hoặc tiền hoàn dương bị loại khỏi hoa hồng. Cần thống nhất quy tắc làm tròn và điều chỉnh hoàn tiền thực tế trước khi dùng kết quả như số thanh toán cuối cùng.
+`data/tooltiktok.sqlite3` là dữ liệu làm việc; `data/.secret-key` giữ phiên đăng nhập ổn định qua các lần chạy. `data/backups/` chứa tối đa 30 bản SQLite gần nhất: một bản khi khởi động mỗi ngày và một bản trước khi nhập dữ liệu từ bản cài khác hoặc công cụ cũ. Có thể bấm **Sao lưu SQLite trên máy** để tạo thêm. Hãy chép file JSON hoặc bản SQLite sang ổ khác; bản sao nằm cùng ổ không bảo vệ khỏi hỏng ổ.
 
-## Sao lưu và vận hành
-
-Ứng dụng tạo tối đa 30 bản sao lưu SQLite gần nhất trong `data/backups` (một bản khi khởi động mỗi ngày và một bản trước mỗi lần nhập JSON cũ). Quản lý có thể tạo thêm ở **Thiết lập** hoặc chạy `python app.py backup`. Hãy sao chép các bản sao lưu sang ổ hoặc dịch vụ khác; bản sao lưu cùng ổ không bảo vệ khỏi hỏng ổ. Nút **Tải bản sao lưu** xuất JSON để kiểm tra và lưu trữ; thao tác khôi phục đầy đủ từ JSON máy chủ chưa được mở trong giao diện, hãy dùng bản SQLite và quy trình vận hành máy chủ để phục hồi.
-
-CSV chỉ được đọc các cột cần báo cáo; tên, số điện thoại và địa chỉ khách hàng trong file gốc không được lưu. API yêu cầu đăng nhập; thao tác sửa cần quyền quản lý và mã chống gửi yêu cầu giả. Khi triển khai Internet, luôn dùng HTTPS và giữ kín `.env` cùng thư mục dữ liệu.
-
-## Kiểm thử
+## Kiểm thử cho người phát triển
 
 ```powershell
-pip install pytest
+python -m pip install -r requirements.txt pytest
 python -m pytest -q
 node --check app.js
 ```
 
-Các kiểm thử bao phủ gán ca qua nửa đêm, chặn ca chồng giờ, chia sẻ lịch giữa hai trình duyệt, nhập CSV, gán tay, kỳ đã chốt và chuyển bản sao lưu cũ.
+Các kiểm thử bao phủ gán ca qua nửa đêm, ngăn ca chồng giờ, nhập CSV, phân quyền, chốt kỳ và xuất/nhập dữ liệu sang một bản cài khác.

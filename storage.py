@@ -1,4 +1,4 @@
-"""Central SQLite storage. All clients connect to the server, never to this file."""
+"""SQLite storage kept inside each local installation's data directory."""
 
 from __future__ import annotations
 

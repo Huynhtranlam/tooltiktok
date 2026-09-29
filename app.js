@@ -10,7 +10,7 @@
   const dateText = value => value ? `${value.slice(8,10)}/${value.slice(5,7)}/${value.slice(0,4)}` : '—';
   const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
   const weekdays = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-  const state = {user:null, csrf:'', data:null, report:null, chartExpanded:false, periodDraft:[], activePeriod:0, overrideDraft:[], overrideEditing:false, csvFile:null, csvHash:'', legacyFile:null, legacyHash:'', activeOrder:null, draftTimer:null};
+  const state = {user:null, csrf:'', data:null, report:null, chartExpanded:false, periodDraft:[], activePeriod:0, overrideDraft:[], overrideEditing:false, csvFile:null, csvHash:'', portableFile:null, portableHash:'', legacyFile:null, legacyHash:'', activeOrder:null, draftTimer:null};
   const isAdmin = () => state.user?.role === 'admin';
 
   async function api(path, options = {}) {
@@ -47,8 +47,8 @@
     try { me = await api('/api/me'); }
     catch (error) {
       if (error.status !== 401) $('#loginError').textContent = location.protocol === 'file:' || error.status === 404
-        ? 'Bản dùng chung cần chạy trên máy chủ LiveLedger. Hãy mở địa chỉ do quản lý cung cấp; file HTML hoặc GitHub Pages không lưu được dữ liệu chung.'
-        : `Không kết nối được máy chủ: ${error.message}`;
+        ? 'Hãy chạy start-local.cmd trên máy này rồi mở http://127.0.0.1:8000/. Không mở index.html hoặc GitHub Pages trực tiếp.'
+        : `Không kết nối được ứng dụng trên máy này: ${error.message}`;
       $('#loginView').classList.remove('hide'); $('#appView').classList.add('hide');
       return;
     }
@@ -68,9 +68,9 @@
     $('#draftBanner').classList.toggle('hide', !isAdmin() || !draft);
     if (draft && draft.baseVersion !== state.data.schedule.version) $('#draftBanner span').textContent = 'Bản nháp được tạo trước khi lịch thay đổi trên máy khác. Hãy kiểm tra kỹ trước khi lưu.';
     renderSchedule(); renderOverride(); renderRates(); renderStaff(); renderClosures();
-    $('#lastImport').textContent = state.data.lastImport ? `Lần nhập gần nhất: ${new Date(state.data.lastImport.created_at).toLocaleString('vi-VN')} · ${state.data.lastImport.order_count} đơn (${state.data.lastImport.inserted} mới, ${state.data.lastImport.updated} cập nhật).` : 'Chưa nhập file CSV trên máy chủ.';
+    $('#lastImport').textContent = state.data.lastImport ? `Lần nhập gần nhất: ${new Date(state.data.lastImport.created_at).toLocaleString('vi-VN')} · ${state.data.lastImport.order_count} đơn (${state.data.lastImport.inserted} mới, ${state.data.lastImport.updated} cập nhật).` : state.data.orderCount ? `Máy này có ${state.data.orderCount} đơn từ dữ liệu đã chuyển; chưa có lượt nhập CSV trực tiếp.` : 'Chưa nhập file CSV trên máy này.';
     $('#addStaffForm').classList.toggle('hide', !isAdmin()); $('#addUserForm').classList.toggle('hide', !isAdmin());
-    ['downloadBackup','serverBackup','previewLegacy','closePayroll'].forEach(id => { $('#' + id).disabled = !isAdmin() || (id === 'previewLegacy' && !state.legacyFile); });
+    ['downloadBackup','serverBackup','previewPortable','previewLegacy','closePayroll'].forEach(id => { $('#' + id).disabled = !isAdmin() || (id === 'previewPortable' && !state.portableFile) || (id === 'previewLegacy' && !state.legacyFile); });
   }
   async function loadReport() {
     const from = $('#reportFrom').value, to = $('#reportTo').value;
@@ -123,7 +123,7 @@
     const period = state.periodDraft[state.activePeriod]; if (!period) return;
     period.start = $('#periodStart').value; period.end = $('#periodEnd').value;
     period.shifts = readShifts($('#shiftEditor'), true);
-    $('#draftStatus').textContent = 'Đang lưu bản nháp trên máy chủ…';
+    $('#draftStatus').textContent = 'Đang lưu bản nháp trên máy này…';
     $('#scheduleSaved').textContent = 'Có thay đổi chưa lưu';
     renderWeekPreview(); renderPeriodNav();
     clearTimeout(state.draftTimer);
@@ -170,7 +170,7 @@
     syncPeriod(); clearTimeout(state.draftTimer);
     try {
       await api('/api/schedule', {method:'PUT', body:json({baseVersion:state.data.schedule.version, periods:state.periodDraft})});
-      $('#scheduleErrors').classList.add('hide'); notice('Đã lưu lịch chung. Đơn chưa chốt được tính lại theo lịch mới.');
+      $('#scheduleErrors').classList.add('hide'); notice('Đã lưu lịch trên máy này. Đơn chưa chốt được tính lại theo lịch mới.');
       await loadState(); await loadReport();
     } catch (error) { if (error.fields) showScheduleErrors(error.fields); else fail(error); }
   }
@@ -244,11 +244,10 @@
     } catch (error) { fail(error); }
   }
   function previewBox(target, html) { const box = $(target); box.innerHTML = html; box.classList.remove('hide'); }
-  async function downloadBackup() {
-    const response = await fetch('/api/backup', {credentials:'same-origin'});
-    if (!response.ok) throw new Error((await response.json()).error);
-    const url = URL.createObjectURL(await response.blob()); const link = document.createElement('a');
-    link.href = url; link.download = `tooltiktok-backup-${today()}.json`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  function downloadBackup() {
+    const link = document.createElement('a');
+    link.href = '/api/backup'; link.download = `liveledger-data-${today()}.json`;
+    document.body.appendChild(link); link.click(); link.remove();
   }
 
   $('#loginForm').addEventListener('submit', async event => {
@@ -324,11 +323,33 @@
 
   $('#addStaffForm').addEventListener('submit', async event => { event.preventDefault(); const name = new FormData(event.currentTarget).get('name'); try { await api('/api/staff',{method:'POST',body:json({name})}); event.currentTarget.reset(); notice('Đã thêm nhân viên.'); await loadState(); } catch (error) { fail(error); } });
   $('#addUserForm').addEventListener('submit', async event => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await api('/api/users',{method:'POST',body:json({username:form.get('username'),password:form.get('password'),role:form.get('role')})}); event.currentTarget.reset(); notice('Đã tạo tài khoản.'); await loadAdminPanels(); } catch (error) { fail(error); } });
-  $('#downloadBackup').addEventListener('click', async () => { try { await downloadBackup(); notice('Đã tải bản sao lưu. Hãy giữ file ở nơi an toàn.'); } catch (error) { fail(error); } });
-  $('#serverBackup').addEventListener('click', async () => { try { const result = await api('/api/backup/server',{method:'POST'}); notice(`Đã tạo bản sao lưu ${result.file} trên máy chủ.`); } catch (error) { fail(error); } });
+  $('#downloadBackup').addEventListener('click', () => { downloadBackup(); notice('Đang tải dữ liệu của máy này. Hãy giữ file ở nơi an toàn.'); });
+  $('#serverBackup').addEventListener('click', async () => { try { const result = await api('/api/backup/server',{method:'POST'}); notice(`Đã tạo bản sao lưu ${result.file} trong thư mục data/backups của máy này.`); } catch (error) { fail(error); } });
+  $('#portableFile').addEventListener('change', event => { state.portableFile = event.target.files[0] || null; state.portableHash = ''; $('#previewPortable').disabled = !state.portableFile || !isAdmin(); $('#portablePreview').classList.add('hide'); });
+  $('#previewPortable').addEventListener('click', async () => {
+    if (!state.portableFile) return;
+    const form = new FormData(); form.append('file',state.portableFile);
+    try {
+      const result = await api('/api/backup/preview',{method:'POST',body:form}); state.portableHash = result.sha256;
+      previewBox('#portablePreview', `<strong>Dữ liệu từ ${escape(state.portableFile.name)}</strong><div class="preview-stats"><span><b>${count(result.staff)}</b>nhân viên</span><span><b>${count(result.periods)}</b>khoảng lịch</span><span><b>${count(result.orders)}</b>đơn</span><span><b>${count(result.manual)}</b>đơn chỉnh tay</span><span><b>${count(result.closures)}</b>kỳ đã chốt</span></div><p>Máy này hiện có ${count(result.currentOrders)} đơn. Sau khi nhập, toàn bộ dữ liệu nghiệp vụ hiện tại sẽ được thay bằng file này; tài khoản đăng nhập vẫn giữ nguyên.</p><button id="commitPortable" class="button danger">Thay dữ liệu trên máy này</button>`);
+    } catch (error) { fail(error); }
+  });
+  $('#portablePreview').addEventListener('click', async event => {
+    if (event.target.id !== 'commitPortable' || !state.portableFile) return;
+    if (!confirm('Thay toàn bộ lịch, đơn và hoa hồng trên máy này bằng file đã xem trước? Ứng dụng sẽ sao lưu SQLite hiện tại trước khi thay.')) return;
+    const form = new FormData(); form.append('file',state.portableFile); form.append('sha256',state.portableHash);
+    event.target.disabled = true;
+    try {
+      const result = await api('/api/backup/commit',{method:'POST',body:form});
+      $('#portablePreview').classList.add('hide'); $('#portableFile').value = ''; state.portableFile = null; state.portableHash = ''; $('#previewPortable').disabled = true;
+      state.activePeriod = 0; state.overrideEditing = false; $('#snapshotPanel').classList.add('hide');
+      await loadState(); await loadReport(); await loadAdminPanels();
+      notice(`Đã nhập ${result.orders} đơn và ${result.periods} khoảng lịch trên máy này.`);
+    } catch (error) { event.target.disabled = false; fail(error); }
+  });
   $('#legacyFile').addEventListener('change', event => { state.legacyFile = event.target.files[0] || null; state.legacyHash = ''; $('#previewLegacy').disabled = !state.legacyFile || !isAdmin(); $('#legacyPreview').classList.add('hide'); });
-  $('#previewLegacy').addEventListener('click', async () => { if (!state.legacyFile) return; const form = new FormData(); form.append('file',state.legacyFile); try { const result = await api('/api/legacy/preview',{method:'POST',body:form}); state.legacyHash = result.sha256; previewBox('#legacyPreview', `<strong>Bản sao lưu: ${escape(state.legacyFile.name)}</strong><div class="preview-stats"><span><b>${count(result.orders)}</b>đơn</span><span><b>${count(result.existingOrders)}</b>đơn trùng mã</span><span><b>${count(result.periods)}</b>khoảng lịch</span></div><p>Nhân viên: ${result.staff.map(escape).join(', ') || 'Không có'}.</p><label class="day-pill"><input id="replaceLegacySchedule" type="checkbox"> Thay lịch, lịch riêng và tỷ lệ hiện tại bằng dữ liệu trong bản sao lưu</label><p class="muted small-text">Đơn trùng mã sẽ được cập nhật. Nếu không đánh dấu, giữ lịch và tỷ lệ trên máy chủ.</p><button id="commitLegacy" class="button primary">Chuyển dữ liệu lên máy chủ</button>`); } catch (error) { fail(error); } });
-  $('#legacyPreview').addEventListener('click', async event => { if (event.target.id !== 'commitLegacy' || !state.legacyFile) return; const replaceSchedule = $('#replaceLegacySchedule').checked; if (!confirm(`Nhập ${state.legacyFile.name} lên máy chủ? ${replaceSchedule ? 'Lịch và tỷ lệ hiện tại sẽ được thay.' : 'Lịch hiện tại được giữ.'}`)) return; const form = new FormData(); form.append('file',state.legacyFile); form.append('sha256',state.legacyHash); form.append('replaceSchedule',String(replaceSchedule)); event.target.disabled = true; try { const result = await api('/api/legacy/commit',{method:'POST',body:form}); $('#legacyPreview').classList.add('hide'); $('#legacyFile').value = ''; state.legacyFile = null; $('#previewLegacy').disabled = true; notice(`Đã chuyển ${result.orders} đơn từ công cụ cũ.${result.replacedSchedule ? ' Đã thay lịch theo file sao lưu.' : ''}`); await loadState(); await loadReport(); await loadAdminPanels(); } catch (error) { event.target.disabled = false; fail(error); } });
+  $('#previewLegacy').addEventListener('click', async () => { if (!state.legacyFile) return; const form = new FormData(); form.append('file',state.legacyFile); try { const result = await api('/api/legacy/preview',{method:'POST',body:form}); state.legacyHash = result.sha256; previewBox('#legacyPreview', `<strong>Bản sao lưu: ${escape(state.legacyFile.name)}</strong><div class="preview-stats"><span><b>${count(result.orders)}</b>đơn</span><span><b>${count(result.existingOrders)}</b>đơn trùng mã</span><span><b>${count(result.periods)}</b>khoảng lịch</span></div><p>Nhân viên: ${result.staff.map(escape).join(', ') || 'Không có'}.</p><label class="day-pill"><input id="replaceLegacySchedule" type="checkbox"> Thay lịch, lịch riêng và tỷ lệ hiện tại bằng dữ liệu trong bản sao lưu</label><p class="muted small-text">Đơn trùng mã sẽ được cập nhật. Nếu không đánh dấu, giữ lịch và tỷ lệ trên máy này.</p><button id="commitLegacy" class="button primary">Nhập dữ liệu cũ trên máy này</button>`); } catch (error) { fail(error); } });
+  $('#legacyPreview').addEventListener('click', async event => { if (event.target.id !== 'commitLegacy' || !state.legacyFile) return; const replaceSchedule = $('#replaceLegacySchedule').checked; if (!confirm(`Nhập ${state.legacyFile.name} trên máy này? ${replaceSchedule ? 'Lịch và tỷ lệ hiện tại sẽ được thay.' : 'Lịch hiện tại được giữ.'}`)) return; const form = new FormData(); form.append('file',state.legacyFile); form.append('sha256',state.legacyHash); form.append('replaceSchedule',String(replaceSchedule)); event.target.disabled = true; try { const result = await api('/api/legacy/commit',{method:'POST',body:form}); $('#legacyPreview').classList.add('hide'); $('#legacyFile').value = ''; state.legacyFile = null; $('#previewLegacy').disabled = true; notice(`Đã chuyển ${result.orders} đơn từ công cụ cũ.${result.replacedSchedule ? ' Đã thay lịch theo file sao lưu.' : ''}`); await loadState(); await loadReport(); await loadAdminPanels(); } catch (error) { event.target.disabled = false; fail(error); } });
 
   boot();
 })();
