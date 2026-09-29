@@ -559,15 +559,19 @@ def create_app(test_config: dict | None = None) -> Flask:
 def cli():
     parser = argparse.ArgumentParser(description="LiveLedger trên máy này")
     parser.add_argument("command", nargs="?", default="serve", choices=("serve", "backup"))
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, help="Cổng cố định (mặc định tự chọn từ 8001–8099)")
     args = parser.parse_args()
-    from local import prepare_environment
+    from local import choose_port, prepare_environment
     prepare_environment()
     app = create_app()
     if args.command == "backup":
         print(make_backup(Path(app.config["DATABASE_PATH"]), Path(app.config["BACKUP_DIR"])))
     else:
-        app.run(host="127.0.0.1", port=args.port, debug=False)
+        try:
+            port = choose_port(args.port)
+        except ValueError as error:
+            parser.error(str(error))
+        app.run(host="127.0.0.1", port=port, debug=False)
 
 
 if __name__ == "__main__":

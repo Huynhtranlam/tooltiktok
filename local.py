@@ -6,6 +6,7 @@ import argparse
 import os
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import threading
@@ -53,21 +54,47 @@ def open_app_window(url: str) -> None:
     webbrowser.open(url)
 
 
+def port_available(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+            probe.bind(("127.0.0.1", port))
+        return True
+    except OSError:
+        return False
+
+
+def choose_port(requested: int | None, start: int = 8001, end: int = 8099) -> int:
+    if requested is not None:
+        if not 1 <= requested <= 65535:
+            raise ValueError("Cổng phải từ 1 đến 65535.")
+        if not port_available(requested):
+            raise ValueError(f"Cổng {requested} đang được ứng dụng khác sử dụng. Hãy chọn cổng khác.")
+        return requested
+    for port in range(start, end + 1):
+        if port_available(port):
+            return port
+    raise ValueError(f"Không tìm thấy cổng trống trong khoảng {start}–{end}.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Chạy LiveLedger chỉ trên máy này")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--port", type=int, help="Cổng cố định (mặc định tự chọn từ 8001–8099)")
     args = parser.parse_args()
-    if not 1 <= args.port <= 65535:
-        parser.error("Cổng phải từ 1 đến 65535.")
+    try:
+        port = choose_port(args.port)
+    except ValueError as error:
+        parser.error(str(error))
     prepare_environment()
     app = create_app()
-    url = f"http://127.0.0.1:{args.port}/"
+    url = f"http://127.0.0.1:{port}/"
     print(f"LiveLedger đang chạy tại {url}")
     print("Dữ liệu riêng của máy này nằm trong thư mục data/. Nhấn Ctrl+C để dừng.")
     timer = threading.Timer(1.0, lambda: open_app_window(url))
     timer.daemon = True
     timer.start()
-    serve(app, host="127.0.0.1", port=args.port, threads=4)
+    serve(app, host="127.0.0.1", port=port, threads=4)
 
 
 if __name__ == "__main__":

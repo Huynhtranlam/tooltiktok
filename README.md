@@ -6,7 +6,7 @@ Mỗi người tải hoặc clone mã nguồn về **máy của mình** rồi ch
 
 1. Cài Python 3.12 trở lên và tải/clone repository này vào một thư mục có quyền ghi.
 2. Nhấp đúp `start-local.cmd`. Lần đầu cần Internet để cài Flask và Waitress; ứng dụng tạo thư mục `.venv` và `data` riêng trên máy này.
-3. Ứng dụng tự mở tại `http://127.0.0.1:8000/` (trên Windows có Edge, nó mở trong cửa sổ app riêng). Bạn vào thẳng ứng dụng, không cần tài khoản hay mật khẩu.
+3. Ứng dụng tự chọn cổng trống từ 8001 đến 8099 rồi mở cửa sổ của nó (trên Windows có Edge, nó mở trong cửa sổ app riêng). Địa chỉ chính xác hiện trong cửa sổ chạy. Bạn vào thẳng ứng dụng, không cần tài khoản hay mật khẩu.
 4. Giữ cửa sổ chạy ứng dụng mở khi sử dụng. Muốn dừng, đóng cửa sổ đó. Lần sau chỉ cần nhấp đúp `start-local.cmd`.
 
 Ứng dụng chỉ nghe trên `127.0.0.1`, tức chính máy này. Nó không gửi dữ liệu đến máy của người khác. `index.html` phải được mở qua địa chỉ trên; mở trực tiếp bằng `file://` hoặc GitHub Pages sẽ không kết nối được SQLite.
@@ -19,7 +19,7 @@ Trên máy có dữ liệu cần chuyển, vào **Thiết lập → Xuất dữ 
 
 Ở bản cài khác, vào **Thiết lập → Nhập dữ liệu từ bản cài khác**, chọn file JSON và bấm **Xem trước**. Sau khi xác nhận, ứng dụng thay toàn bộ dữ liệu nghiệp vụ trên máy nhận bằng nội dung file. Ứng dụng tạo một bản sao lưu SQLite của máy nhận **trước khi thay**. Vì vậy có thể clone source vào một thư mục thử nghiệm, nhập file của người dùng và tái hiện lỗi mà không đụng cơ sở dữ liệu làm việc của họ.
 
-Nếu chạy hai bản clone trên cùng một máy, bản thứ hai có thể dùng `start-local.cmd --port 8001` rồi mở `http://127.0.0.1:8001/`. Mỗi thư mục clone vẫn có `data/` riêng.
+Nếu chạy hai bản clone trên cùng một máy, mỗi bản tự chọn cổng còn trống và vẫn có `data/` riêng. Muốn dùng cổng cố định, chạy `start-local.cmd --port 8010` rồi mở `http://127.0.0.1:8010/`.
 
 Xuất dữ liệu là thao tác thủ công. Các máy không đồng bộ tự động, và nhập cùng một file nhiều lần sẽ thay dữ liệu hiện tại bằng trạng thái trong file.
 

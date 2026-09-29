@@ -47,7 +47,7 @@
     try { me = await api('/api/me'); }
     catch (error) {
       $('#loginError').textContent = location.protocol === 'file:' || error.status === 404
-        ? 'Hãy chạy start-local.cmd trên máy này rồi mở http://127.0.0.1:8000/. Không mở index.html hoặc GitHub Pages trực tiếp.'
+        ? 'Hãy chạy start-local.cmd trên máy này và dùng cửa sổ ứng dụng tự mở. Không mở index.html hoặc GitHub Pages trực tiếp.'
         : `Không kết nối được ứng dụng trên máy này: ${error.message}`;
       $('#loginView').classList.remove('hide'); $('#appView').classList.add('hide');
       return;

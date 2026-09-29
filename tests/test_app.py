@@ -1,6 +1,7 @@
 import copy
 import io
 import json
+import socket
 
 import pytest
 
@@ -267,3 +268,16 @@ def test_local_launcher_keeps_machine_secret_and_opens_without_password(tmp_path
     client = app.test_client()
     assert client.get("/api/me").json["user"]["role"] == "admin"
     assert client.get("/api/state").status_code == 200
+
+
+def test_local_launcher_skips_ports_used_by_other_apps():
+    import local
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        port = occupied.getsockname()[1]
+        assert not local.port_available(port)
+        with pytest.raises(ValueError, match="đang được ứng dụng khác"):
+            local.choose_port(port)
+        assert local.choose_port(None, start=port, end=min(port + 10, 65535)) != port
+    assert local.choose_port(None) >= 8001
