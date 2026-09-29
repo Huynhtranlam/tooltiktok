@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -131,6 +132,8 @@ def initial_schedule(staff_ids: dict[str, int]) -> dict:
 def init_db(path: Path) -> None:
     db = connect(path)
     db.executescript(SCHEMA)
+    db.execute("INSERT OR IGNORE INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
+               ("__local_app__", secrets.token_hex(32), "admin", now()))
     if not db.execute("SELECT 1 FROM staff LIMIT 1").fetchone():
         stamp = now()
         for name in ("NHUNG", "VY", "THƯ", "PHÁT", "HÀO"):

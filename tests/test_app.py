@@ -3,11 +3,10 @@ import io
 import json
 
 import pytest
-from werkzeug.security import generate_password_hash
 
 from app import create_app
 from domain import classify, validate_schedule
-from storage import current_schedule, get_db, now
+from storage import current_schedule, get_db
 
 
 @pytest.fixture
@@ -18,16 +17,11 @@ def shared(tmp_path):
         "DATABASE_PATH": str(tmp_path / "shared.sqlite3"),
         "BACKUP_DIR": str(tmp_path / "backups"),
     })
-    with app.app_context():
-        db = get_db()
-        with db:
-            db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
-                       ("owner", generate_password_hash("a-strong-test-password"), "admin", now()))
     return app
 
 
 def login(client):
-    response = client.post("/api/login", json={"username": "owner", "password": "a-strong-test-password"})
+    response = client.get("/api/me")
     assert response.status_code == 200
     return {"X-CSRF-Token": response.json["csrf"]}
 
@@ -123,7 +117,7 @@ def test_bad_csv_is_previewed_but_never_committed(shared):
     assert client.get("/api/state").json["orderCount"] == 0
 
 
-def test_server_draft_viewer_permissions_and_day_overlap(shared):
+def test_server_draft_and_day_overlap_without_login(shared):
     first, second = shared.test_client(), shared.test_client()
     headers = login(first); login(second)
     schedule = first.get("/api/state").json["schedule"]
@@ -133,16 +127,10 @@ def test_server_draft_viewer_permissions_and_day_overlap(shared):
     assert second.get("/api/state").json["draft"]["periods"][2]["shifts"][0]["end"] == "12:58"
     overlap = first.put("/api/overrides/2026-09-21", json={"shifts":[{"id":"early","staffId":1,"start":"00:30","end":"02:00","endDay":0}]}, headers=headers)
     assert overlap.status_code == 422
-    with shared.app_context():
-        db = get_db()
-        with db:
-            db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
-                       ("viewer",generate_password_hash("viewer-test-password"),"viewer",now()))
     observer = shared.test_client()
-    result = observer.post("/api/login", json={"username":"viewer","password":"viewer-test-password"})
-    view_headers = {"X-CSRF-Token":result.json["csrf"]}
     assert observer.get("/api/state").status_code == 200
-    assert observer.put("/api/schedule", json={"baseVersion":schedule["version"],"periods":draft}, headers=view_headers).status_code == 403
+    assert observer.get("/api/login").status_code == 404
+    assert observer.get("/api/me", headers={"Host":"other-machine.test"}).status_code == 403
 
 
 def test_ambiguous_amount_rejected(shared):
@@ -219,14 +207,8 @@ def test_portable_export_restores_business_data_to_an_independent_install(shared
     target_app = create_app({"TESTING":True,"SECRET_KEY":"different-local-secret",
                              "DATABASE_PATH":str(tmp_path / "second-install" / "tooltiktok.sqlite3"),
                              "BACKUP_DIR":str(tmp_path / "second-install" / "backups")})
-    with target_app.app_context():
-        db = get_db()
-        with db:
-            db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
-                       ("local",generate_password_hash("local-admin-password"),"admin",now()))
     target = target_app.test_client()
-    signed_in = target.post("/api/login",json={"username":"local","password":"local-admin-password"})
-    target_headers = {"X-CSRF-Token":signed_in.json["csrf"]}
+    target_headers = login(target)
     assert target.post("/api/staff",json={"name":"JUNK"},headers=target_headers).status_code == 201
     raw = exported.data
     preview = upload(target,"/api/backup/preview",raw,target_headers)
@@ -238,7 +220,7 @@ def test_portable_export_restores_business_data_to_an_independent_install(shared
     assert target_state["orderCount"] == 2
     assert any(person["name"] == "AN" for person in target_state["staff"])
     assert not any(person["name"] == "JUNK" for person in target_state["staff"])
-    assert target.get("/api/users").json[0]["username"] == "local"
+    assert target.get("/api/me").json["user"]["username"] == "Máy này"
     report = target.get("/api/report?from=2026-09-20&to=2026-09-20").json
     assert report["totals"]["orders"] == 2
     assert report["totals"]["commission"] == 15000
@@ -270,7 +252,7 @@ def test_backup_from_previous_server_release_can_be_previewed(shared):
     assert preview.status_code == 200 and preview.json["periods"] == 3
 
 
-def test_local_launcher_keeps_the_machine_secret_and_admin(tmp_path, monkeypatch):
+def test_local_launcher_keeps_machine_secret_and_opens_without_password(tmp_path, monkeypatch):
     import local
 
     monkeypatch.setattr(local, "DATA_DIR", tmp_path / "private-data")
@@ -280,11 +262,8 @@ def test_local_launcher_keeps_the_machine_secret_and_admin(tmp_path, monkeypatch
     first_secret = (local.DATA_DIR / ".secret-key").read_text()
     local.prepare_environment()
     assert (local.DATA_DIR / ".secret-key").read_text() == first_secret
-    passwords = iter(["local-admin-password", "local-admin-password"])
-    monkeypatch.setattr(local.getpass, "getpass", lambda _prompt: next(passwords))
     app = create_app({"TESTING":True,"DATABASE_PATH":str(local.DATA_DIR / "tooltiktok.sqlite3"),
                       "BACKUP_DIR":str(local.DATA_DIR / "backups")})
-    local.create_first_admin(app)
-    local.create_first_admin(app)
     client = app.test_client()
-    assert client.post("/api/login",json={"username":"admin","password":"local-admin-password"}).status_code == 200
+    assert client.get("/api/me").json["user"]["role"] == "admin"
+    assert client.get("/api/state").status_code == 200

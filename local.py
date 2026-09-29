@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import os
 import secrets
+import shutil
+import subprocess
 import sys
 import threading
 import webbrowser
 from pathlib import Path
 
 from waitress import serve
-from werkzeug.security import generate_password_hash
 
 from app import create_app
-from storage import get_db, now
 
 
 ROOT = Path(__file__).resolve().parent
@@ -37,22 +36,21 @@ def prepare_environment() -> None:
     os.environ.setdefault("TOOLTIKTOK_DATA_DIR", str(DATA_DIR))
 
 
-def create_first_admin(app) -> None:
-    with app.app_context():
-        db = get_db()
-        if db.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-            return
-        print("Lần chạy đầu: tạo tài khoản quản lý cho riêng máy này.")
-        while True:
-            password = getpass.getpass("Mật khẩu admin (ít nhất 12 ký tự): ")
-            repeated = getpass.getpass("Nhập lại mật khẩu: ")
-            if len(password) >= 12 and password == repeated:
-                break
-            print("Mật khẩu cần ít nhất 12 ký tự và hai lần nhập phải giống nhau.")
-        with db:
-            db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
-                       ("admin", generate_password_hash(password), "admin", now()))
-        print("Đã tạo tài khoản admin trên máy này.")
+def open_app_window(url: str) -> None:
+    """Use Edge's compact app window when available, otherwise open the browser."""
+    candidates = [shutil.which("msedge")]
+    for name in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
+        if os.environ.get(name):
+            candidates.append(str(Path(os.environ[name]) / "Microsoft" / "Edge" / "Application" / "msedge.exe"))
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file():
+            try:
+                subprocess.Popen([candidate, f"--app={url}", "--new-window"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except OSError:
+                pass
+    webbrowser.open(url)
 
 
 def main() -> None:
@@ -63,11 +61,10 @@ def main() -> None:
         parser.error("Cổng phải từ 1 đến 65535.")
     prepare_environment()
     app = create_app()
-    create_first_admin(app)
     url = f"http://127.0.0.1:{args.port}/"
     print(f"LiveLedger đang chạy tại {url}")
     print("Dữ liệu riêng của máy này nằm trong thư mục data/. Nhấn Ctrl+C để dừng.")
-    timer = threading.Timer(1.0, lambda: webbrowser.open(url))
+    timer = threading.Timer(1.0, lambda: open_app_window(url))
     timer.daemon = True
     timer.start()
     serve(app, host="127.0.0.1", port=args.port, threads=4)

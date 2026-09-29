@@ -14,13 +14,8 @@
     <div class="login-card">
       <div class="brand-mark" aria-hidden="true">L</div>
       <p class="eyebrow">Quản lý TikTok Live</p>
-      <h1>Đăng nhập LiveLedger</h1>
-      <p class="muted">Dữ liệu được lưu riêng trên máy đang chạy ứng dụng.</p>
-      <form id="loginForm" class="form-stack">
-        <label>Tên đăng nhập<input name="username" autocomplete="username" required></label>
-        <label>Mật khẩu<input name="password" type="password" autocomplete="current-password" required></label>
-        <button class="button primary full" type="submit">Đăng nhập</button>
-      </form>
+      <h1>Đang mở LiveLedger</h1>
+      <p class="muted">Dữ liệu được lưu riêng trên máy này.</p>
       <p id="loginError" class="field-error" role="alert"></p>
     </div>
   </div>
@@ -35,7 +30,7 @@
         <button class="nav-button" data-screen="payroll"><span aria-hidden="true">◈</span> Hoa hồng</button>
         <button class="nav-button" data-screen="settings"><span aria-hidden="true">⚙</span> Thiết lập</button>
       </nav>
-      <div class="sidebar-footer"><span id="currentUser"></span><button id="logoutButton" class="text-button">Đăng xuất</button></div>
+      <div class="sidebar-footer"><span id="currentUser">Dữ liệu trên máy này</span></div>
     </aside>
 
     <div class="main-area">
@@ -73,14 +68,13 @@
         </section>
 
         <section id="settings" class="screen" aria-labelledby="settingsTitle">
-          <div class="page-head"><div><p class="eyebrow">Quản trị</p><h1 id="settingsTitle">Thiết lập</h1><p class="muted">Nhân viên, tài khoản, sao lưu và chuyển dữ liệu từ bản cũ.</p></div></div>
+          <div class="page-head"><div><p class="eyebrow">Quản trị</p><h1 id="settingsTitle">Thiết lập</h1><p class="muted">Nhân viên, sao lưu và chuyển dữ liệu từ bản cũ.</p></div></div>
           <div class="settings-grid">
             <section class="card"><div class="card-head"><div><h2>Nhân viên</h2><p>Chọn tên từ danh sách khi xếp ca để tránh gõ sai.</p></div></div><div id="staffList" class="tag-list"></div><form id="addStaffForm" class="form-row"><label class="grow">Thêm nhân viên<input name="name" maxlength="80" placeholder="Tên nhân viên"></label><button class="button" type="submit">Thêm</button></form></section>
-            <section class="card"><div class="card-head"><div><h2>Tài khoản trên máy này</h2><p>Quản lý được sửa dữ liệu; tài khoản xem chỉ xem báo cáo.</p></div></div><div id="userList" class="tag-list"></div><form id="addUserForm" class="form-stack"><label>Tên đăng nhập<input name="username" minlength="3" required></label><label>Mật khẩu mới<input name="password" type="password" minlength="12" required autocomplete="new-password"></label><label>Quyền<select name="role"><option value="viewer">Chỉ xem</option><option value="admin">Quản lý</option></select></label><button class="button" type="submit">Tạo tài khoản</button></form></section>
             <section class="card"><div class="card-head"><div><h2>Xuất và nhập dữ liệu</h2><p>Mỗi máy có dữ liệu riêng. Xuất file để chuyển sang một bản cài khác hoặc gửi khi cần tái hiện lỗi.</p></div></div>
               <div class="form-row"><button id="downloadBackup" class="button primary">Xuất dữ liệu JSON</button><button id="serverBackup" class="button">Sao lưu SQLite trên máy</button></div>
-              <p class="muted small-text">File JSON gồm lịch, đơn, tỷ lệ và kỳ đã chốt; không gồm tài khoản hoặc mật khẩu. Chỉ chia sẻ file với người bạn tin cậy.</p>
-              <hr><h3>Nhập dữ liệu từ bản cài khác</h3><p class="muted small-text">Việc nhập sẽ thay lịch, đơn và hoa hồng trên máy này. Tài khoản đăng nhập vẫn giữ nguyên; ứng dụng tự sao lưu SQLite trước khi thay.</p>
+              <p class="muted small-text">File JSON gồm lịch, đơn, tỷ lệ và kỳ đã chốt. Chỉ chia sẻ file với người bạn tin cậy.</p>
+              <hr><h3>Nhập dữ liệu từ bản cài khác</h3><p class="muted small-text">Việc nhập sẽ thay lịch, đơn và hoa hồng trên máy này. Ứng dụng tự sao lưu SQLite trước khi thay.</p>
               <div class="form-row"><label class="file-picker">Chọn file LiveLedger JSON<input id="portableFile" type="file" accept=".json,application/json"></label><button id="previewPortable" class="button" disabled>Xem trước</button></div><div id="portablePreview" class="preview-box hide"></div>
               <hr><h3>Chuyển từ công cụ HTML cũ</h3><p class="muted small-text">Mở đúng file HTML cũ trên máy cũ và chọn “Sao lưu dữ liệu”. Xem trước file trước khi chuyển.</p>
               <div class="form-row"><label class="file-picker">Chọn file HTML cũ JSON<input id="legacyFile" type="file" accept=".json,application/json"></label><button id="previewLegacy" class="button" disabled>Xem trước</button></div><div id="legacyPreview" class="preview-box hide"></div>

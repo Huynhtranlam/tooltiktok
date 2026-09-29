@@ -6,8 +6,8 @@ Mỗi người tải hoặc clone mã nguồn về **máy của mình** rồi ch
 
 1. Cài Python 3.12 trở lên và tải/clone repository này vào một thư mục có quyền ghi.
 2. Nhấp đúp `start-local.cmd`. Lần đầu cần Internet để cài Flask và Waitress; ứng dụng tạo thư mục `.venv` và `data` riêng trên máy này.
-3. Lần đầu chạy, đặt mật khẩu cho tài khoản `admin` (ít nhất 12 ký tự). Trình duyệt sẽ mở `http://127.0.0.1:8000/`.
-4. Giữ cửa sổ chạy ứng dụng mở khi sử dụng. Lần sau chỉ cần nhấp đúp `start-local.cmd` và đăng nhập.
+3. Ứng dụng tự mở tại `http://127.0.0.1:8000/` (trên Windows có Edge, nó mở trong cửa sổ app riêng). Bạn vào thẳng ứng dụng, không cần tài khoản hay mật khẩu.
+4. Giữ cửa sổ chạy ứng dụng mở khi sử dụng. Muốn dừng, đóng cửa sổ đó. Lần sau chỉ cần nhấp đúp `start-local.cmd`.
 
 Ứng dụng chỉ nghe trên `127.0.0.1`, tức chính máy này. Nó không gửi dữ liệu đến máy của người khác. `index.html` phải được mở qua địa chỉ trên; mở trực tiếp bằng `file://` hoặc GitHub Pages sẽ không kết nối được SQLite.
 
@@ -15,9 +15,9 @@ Khi cập nhật mã bằng `git pull`, thư mục `data/` và `.venv/` vẫn n�
 
 ## Xuất dữ liệu để chuyển máy hoặc tái hiện lỗi
 
-Trên máy có dữ liệu cần chuyển, đăng nhập quản lý rồi vào **Thiết lập → Xuất dữ liệu JSON**. File gồm nhân viên, lịch cố định, lịch đổi ca, tỷ lệ hoa hồng, đơn hàng, gán tay và các kỳ đã chốt. File **không chứa tài khoản hay mật khẩu**. Nó vẫn chứa mã đơn, tên sản phẩm và số tiền; chỉ chia sẻ với người được phép xem dữ liệu kinh doanh.
+Trên máy có dữ liệu cần chuyển, vào **Thiết lập → Xuất dữ liệu JSON**. File gồm nhân viên, lịch cố định, lịch đổi ca, tỷ lệ hoa hồng, đơn hàng, gán tay và các kỳ đã chốt. Nó chứa mã đơn, tên sản phẩm và số tiền; chỉ chia sẻ với người được phép xem dữ liệu kinh doanh.
 
-Ở bản cài khác, vào **Thiết lập → Nhập dữ liệu từ bản cài khác**, chọn file JSON và bấm **Xem trước**. Sau khi xác nhận, ứng dụng thay toàn bộ dữ liệu nghiệp vụ trên máy nhận bằng nội dung file; tài khoản đăng nhập của máy nhận vẫn giữ nguyên. Ứng dụng tạo một bản sao lưu SQLite của máy nhận **trước khi thay**. Vì vậy có thể clone source vào một thư mục thử nghiệm, nhập file của người dùng và tái hiện lỗi mà không đụng cơ sở dữ liệu làm việc của họ.
+Ở bản cài khác, vào **Thiết lập → Nhập dữ liệu từ bản cài khác**, chọn file JSON và bấm **Xem trước**. Sau khi xác nhận, ứng dụng thay toàn bộ dữ liệu nghiệp vụ trên máy nhận bằng nội dung file. Ứng dụng tạo một bản sao lưu SQLite của máy nhận **trước khi thay**. Vì vậy có thể clone source vào một thư mục thử nghiệm, nhập file của người dùng và tái hiện lỗi mà không đụng cơ sở dữ liệu làm việc của họ.
 
 Nếu chạy hai bản clone trên cùng một máy, bản thứ hai có thể dùng `start-local.cmd --port 8001` rồi mở `http://127.0.0.1:8001/`. Mỗi thư mục clone vẫn có `data/` riêng.
 
@@ -39,7 +39,7 @@ Xuất dữ liệu là thao tác thủ công. Các máy không đồng bộ tự
 
 ## Sao lưu kỹ thuật
 
-`data/tooltiktok.sqlite3` là dữ liệu làm việc; `data/.secret-key` giữ phiên đăng nhập ổn định qua các lần chạy. `data/backups/` chứa tối đa 30 bản SQLite gần nhất: một bản khi khởi động mỗi ngày và một bản trước khi nhập dữ liệu từ bản cài khác hoặc công cụ cũ. Có thể bấm **Sao lưu SQLite trên máy** để tạo thêm. Hãy chép file JSON hoặc bản SQLite sang ổ khác; bản sao nằm cùng ổ không bảo vệ khỏi hỏng ổ.
+`data/tooltiktok.sqlite3` là dữ liệu làm việc; `data/.secret-key` giữ khóa cho phiên thao tác nội bộ. `data/backups/` chứa tối đa 30 bản SQLite gần nhất: một bản khi khởi động mỗi ngày và một bản trước khi nhập dữ liệu từ bản cài khác hoặc công cụ cũ. Có thể bấm **Sao lưu SQLite trên máy** để tạo thêm. Hãy chép file JSON hoặc bản SQLite sang ổ khác; bản sao nằm cùng ổ không bảo vệ khỏi hỏng ổ.
 
 ## Kiểm thử cho người phát triển
 

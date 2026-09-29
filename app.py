@@ -13,7 +13,6 @@ from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import HTTPException
-from werkzeug.security import check_password_hash, generate_password_hash
 
 from domain import classify, parse_csv, report, validate_day_shifts, validate_schedule
 from portable import export_data, inspect_data, restore_data
@@ -42,17 +41,14 @@ def create_app(test_config: dict | None = None) -> Flask:
     if test_config:
         app.config.update(test_config)
     if not app.config.get("TESTING") and not os.environ.get("TOOLTIKTOK_SECRET_KEY"):
-        raise RuntimeError("Cần đặt TOOLTIKTOK_SECRET_KEY cố định để phiên đăng nhập không mất khi khởi động lại.")
+        raise RuntimeError("Cần khóa phiên làm việc cố định trong thư mục dữ liệu.")
     init_db(Path(app.config["DATABASE_PATH"]))
     app.teardown_appcontext(close_db)
     if not app.config.get("TESTING"):
         backup_if_due(Path(app.config["DATABASE_PATH"]), Path(app.config["BACKUP_DIR"]))
 
-    login_attempts: dict[str, list[float]] = {}
-
     def person():
-        user_id = session.get("user_id")
-        return get_db().execute("SELECT id,username,role,active FROM users WHERE id=?", (user_id,)).fetchone() if user_id else None
+        return get_db().execute("SELECT id,username,role,active FROM users WHERE username=?", ("__local_app__",)).fetchone()
 
     def admin():
         user = person()
@@ -132,11 +128,10 @@ def create_app(test_config: dict | None = None) -> Flask:
 
     @app.before_request
     def protect():
-        if not request.path.startswith("/api/") or request.path == "/api/login":
+        if request.host.split(":")[0] not in ("127.0.0.1", "localhost"):
+            abort(403, "Ứng dụng chỉ mở trên máy này.")
+        if not request.path.startswith("/api/"):
             return None
-        user = person()
-        if not user or not user["active"]:
-            abort(401, "Hãy đăng nhập.")
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             if not secrets.compare_digest(request.headers.get("X-CSRF-Token", ""), session.get("csrf", "missing")):
                 abort(403, "Phiên làm việc không hợp lệ. Hãy tải lại trang.")
@@ -170,35 +165,12 @@ def create_app(test_config: dict | None = None) -> Flask:
             abort(404)
         return send_from_directory(ROOT, name)
 
-    @app.post("/api/login")
-    def login():
-        import time
-        key = request.remote_addr or "unknown"
-        current = time.time()
-        recent = [t for t in login_attempts.get(key, []) if current - t < 900]
-        if len(recent) >= 10:
-            abort(429, "Đã thử đăng nhập quá nhiều lần. Hãy đợi 15 phút.")
-        data = body()
-        row = get_db().execute("SELECT * FROM users WHERE username=? COLLATE NOCASE", ((data.get("username") or "").strip(),)).fetchone()
-        if not row or not row["active"] or not check_password_hash(row["password_hash"], data.get("password") or ""):
-            recent.append(current)
-            login_attempts[key] = recent
-            abort(401, "Tên đăng nhập hoặc mật khẩu không đúng.")
-        login_attempts.pop(key, None)
-        session.clear()
-        session["user_id"] = row["id"]
-        session["csrf"] = secrets.token_urlsafe(32)
-        return jsonify({"user": {"id": row["id"], "username": row["username"], "role": row["role"]}, "csrf": session["csrf"]})
-
-    @app.post("/api/logout")
-    def logout():
-        session.clear()
-        return jsonify({"ok": True})
-
     @app.get("/api/me")
     def me():
+        if "csrf" not in session:
+            session["csrf"] = secrets.token_urlsafe(32)
         user = person()
-        return jsonify({"user": {"id": user["id"], "username": user["username"], "role": user["role"]}, "csrf": session["csrf"]})
+        return jsonify({"user": {"id": user["id"], "username": "Máy này", "role": "admin"}, "csrf": session["csrf"]})
 
     @app.get("/api/state")
     def state():
@@ -210,30 +182,6 @@ def create_app(test_config: dict | None = None) -> Flask:
                         "draft": {"baseVersion": draft["base_version"], "periods": json.loads(draft["data"]), "updatedAt": draft["updated_at"]} if draft else None,
                         "orderCount": db.execute("SELECT count(*) FROM orders").fetchone()[0],
                         "lastImport": dict(latest) if latest else None, "closures": closures})
-
-    @app.get("/api/users")
-    def users():
-        admin()
-        return jsonify([dict(r) for r in get_db().execute("SELECT id,username,role,active,created_at FROM users ORDER BY username")])
-
-    @app.post("/api/users")
-    def add_user():
-        actor = admin()
-        data = body()
-        username = str(data.get("username") or "").strip()
-        password = str(data.get("password") or "")
-        role = data.get("role")
-        if not 3 <= len(username) <= 60 or not username.replace("_", "").replace("-", "").isalnum() or len(password) < 12 or role not in ("admin", "viewer"):
-            raise ValueError("Tên đăng nhập 3–60 ký tự; mật khẩu ít nhất 12 ký tự; chọn quyền quản lý hoặc chỉ xem.")
-        db = get_db()
-        try:
-            with db:
-                cursor = db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
-                                    (username, generate_password_hash(password), role, now()))
-                audit(db, actor["id"], "create", "user", str(cursor.lastrowid), after={"username": username, "role": role})
-        except sqlite3.IntegrityError:
-            raise ValueError("Tên đăng nhập đã tồn tại.") from None
-        return jsonify({"id": cursor.lastrowid, "username": username, "role": role}), 201
 
     @app.post("/api/staff")
     def add_staff():
@@ -609,28 +557,17 @@ def create_app(test_config: dict | None = None) -> Flask:
 
 
 def cli():
-    parser = argparse.ArgumentParser(description="Máy chủ phân ca đơn TikTok")
-    parser.add_argument("command", nargs="?", default="serve", choices=("serve", "init-admin", "backup"))
-    parser.add_argument("--username", default="admin")
-    parser.add_argument("--host", default="127.0.0.1")
+    parser = argparse.ArgumentParser(description="LiveLedger trên máy này")
+    parser.add_argument("command", nargs="?", default="serve", choices=("serve", "backup"))
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
+    from local import prepare_environment
+    prepare_environment()
     app = create_app()
-    if args.command == "init-admin":
-        import getpass
-        password = getpass.getpass("Mật khẩu quản lý (ít nhất 12 ký tự): ")
-        if len(password) < 12:
-            raise SystemExit("Mật khẩu quá ngắn.")
-        with app.app_context():
-            db = get_db()
-            with db:
-                db.execute("INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
-                           (args.username, generate_password_hash(password), "admin", now()))
-        print("Đã tạo tài khoản quản lý.")
-    elif args.command == "backup":
+    if args.command == "backup":
         print(make_backup(Path(app.config["DATABASE_PATH"]), Path(app.config["BACKUP_DIR"])))
     else:
-        app.run(host=args.host, port=args.port, debug=False)
+        app.run(host="127.0.0.1", port=args.port, debug=False)
 
 
 if __name__ == "__main__":

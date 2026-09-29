@@ -46,7 +46,7 @@
     let me;
     try { me = await api('/api/me'); }
     catch (error) {
-      if (error.status !== 401) $('#loginError').textContent = location.protocol === 'file:' || error.status === 404
+      $('#loginError').textContent = location.protocol === 'file:' || error.status === 404
         ? 'Hãy chạy start-local.cmd trên máy này rồi mở http://127.0.0.1:8000/. Không mở index.html hoặc GitHub Pages trực tiếp.'
         : `Không kết nối được ứng dụng trên máy này: ${error.message}`;
       $('#loginView').classList.remove('hide'); $('#appView').classList.add('hide');
@@ -55,7 +55,6 @@
     try {
       state.user = me.user; state.csrf = me.csrf;
       $('#loginView').classList.add('hide'); $('#appView').classList.remove('hide');
-      $('#currentUser').textContent = `${me.user.username} · ${isAdmin() ? 'Quản lý' : 'Chỉ xem'}`;
       await loadState(); await loadReport();
     } catch (error) { fail(error); }
   }
@@ -69,7 +68,7 @@
     if (draft && draft.baseVersion !== state.data.schedule.version) $('#draftBanner span').textContent = 'Bản nháp được tạo trước khi lịch thay đổi trên máy khác. Hãy kiểm tra kỹ trước khi lưu.';
     renderSchedule(); renderOverride(); renderRates(); renderStaff(); renderClosures();
     $('#lastImport').textContent = state.data.lastImport ? `Lần nhập gần nhất: ${new Date(state.data.lastImport.created_at).toLocaleString('vi-VN')} · ${state.data.lastImport.order_count} đơn (${state.data.lastImport.inserted} mới, ${state.data.lastImport.updated} cập nhật).` : state.data.orderCount ? `Máy này có ${state.data.orderCount} đơn từ dữ liệu đã chuyển; chưa có lượt nhập CSV trực tiếp.` : 'Chưa nhập file CSV trên máy này.';
-    $('#addStaffForm').classList.toggle('hide', !isAdmin()); $('#addUserForm').classList.toggle('hide', !isAdmin());
+    $('#addStaffForm').classList.toggle('hide', !isAdmin());
     ['downloadBackup','serverBackup','previewPortable','previewLegacy','closePayroll'].forEach(id => { $('#' + id).disabled = !isAdmin() || (id === 'previewPortable' && !state.portableFile) || (id === 'previewLegacy' && !state.legacyFile); });
   }
   async function loadReport() {
@@ -238,9 +237,8 @@
   async function loadAdminPanels() {
     if (!isAdmin()) return;
     try {
-      const [users,audit] = await Promise.all([api('/api/users'),api('/api/audit')]);
-      $('#userList').innerHTML = users.map(person => `<span class="tag">${escape(person.username)} · ${person.role === 'admin' ? 'Quản lý' : 'Chỉ xem'}</span>`).join('');
-      $('#auditList').innerHTML = audit.map(item => `<div class="audit-row"><strong>${escape(item.username || 'Hệ thống')}</strong> · ${escape(item.action)} ${escape(item.object_type)} ${escape(item.object_id)}<br><small>${new Date(item.at).toLocaleString('vi-VN')}</small></div>`).join('') || '<p class="muted">Chưa có thay đổi.</p>';
+      const audit = await api('/api/audit');
+      $('#auditList').innerHTML = audit.map(item => `<div class="audit-row"><strong>Máy này</strong> · ${escape(item.action)} ${escape(item.object_type)} ${escape(item.object_id)}<br><small>${new Date(item.at).toLocaleString('vi-VN')}</small></div>`).join('') || '<p class="muted">Chưa có thay đổi.</p>';
     } catch (error) { fail(error); }
   }
   function previewBox(target, html) { const box = $(target); box.innerHTML = html; box.classList.remove('hide'); }
@@ -250,18 +248,6 @@
     document.body.appendChild(link); link.click(); link.remove();
   }
 
-  $('#loginForm').addEventListener('submit', async event => {
-    event.preventDefault(); $('#loginError').textContent = '';
-    const form = new FormData(event.currentTarget);
-    try {
-      const result = await api('/api/login', {method:'POST',body:json({username:form.get('username'),password:form.get('password')})});
-      state.user = result.user; state.csrf = result.csrf;
-      $('#loginView').classList.add('hide'); $('#appView').classList.remove('hide');
-      $('#currentUser').textContent = `${result.user.username} · ${isAdmin() ? 'Quản lý' : 'Chỉ xem'}`;
-      await loadState(); await loadReport();
-    } catch (error) { $('#loginError').textContent = error.message; }
-  });
-  $('#logoutButton').addEventListener('click', async () => { try { await api('/api/logout',{method:'POST'}); } finally { location.reload(); } });
   $('#mobileMenu').addEventListener('click', () => $('.sidebar').classList.toggle('open'));
   $$('.nav-button').forEach(button => button.addEventListener('click', () => showScreen(button.dataset.screen)));
   $$('[data-go]').forEach(button => button.addEventListener('click', () => showScreen(button.dataset.go)));
@@ -322,7 +308,6 @@
   $('#exportPayroll').addEventListener('click', () => { if (!state.report) return; downloadCsv('hoa-hong-tam-tinh.csv',['Nhân viên','Số đơn','Số lượng','Doanh số','Hoa hồng tạm tính'],state.report.staff.map(row => [row.staff,row.orders,row.qty,row.revenue,row.commission])); });
 
   $('#addStaffForm').addEventListener('submit', async event => { event.preventDefault(); const name = new FormData(event.currentTarget).get('name'); try { await api('/api/staff',{method:'POST',body:json({name})}); event.currentTarget.reset(); notice('Đã thêm nhân viên.'); await loadState(); } catch (error) { fail(error); } });
-  $('#addUserForm').addEventListener('submit', async event => { event.preventDefault(); const form = new FormData(event.currentTarget); try { await api('/api/users',{method:'POST',body:json({username:form.get('username'),password:form.get('password'),role:form.get('role')})}); event.currentTarget.reset(); notice('Đã tạo tài khoản.'); await loadAdminPanels(); } catch (error) { fail(error); } });
   $('#downloadBackup').addEventListener('click', () => { downloadBackup(); notice('Đang tải dữ liệu của máy này. Hãy giữ file ở nơi an toàn.'); });
   $('#serverBackup').addEventListener('click', async () => { try { const result = await api('/api/backup/server',{method:'POST'}); notice(`Đã tạo bản sao lưu ${result.file} trong thư mục data/backups của máy này.`); } catch (error) { fail(error); } });
   $('#portableFile').addEventListener('change', event => { state.portableFile = event.target.files[0] || null; state.portableHash = ''; $('#previewPortable').disabled = !state.portableFile || !isAdmin(); $('#portablePreview').classList.add('hide'); });
@@ -331,7 +316,7 @@
     const form = new FormData(); form.append('file',state.portableFile);
     try {
       const result = await api('/api/backup/preview',{method:'POST',body:form}); state.portableHash = result.sha256;
-      previewBox('#portablePreview', `<strong>Dữ liệu từ ${escape(state.portableFile.name)}</strong><div class="preview-stats"><span><b>${count(result.staff)}</b>nhân viên</span><span><b>${count(result.periods)}</b>khoảng lịch</span><span><b>${count(result.orders)}</b>đơn</span><span><b>${count(result.manual)}</b>đơn chỉnh tay</span><span><b>${count(result.closures)}</b>kỳ đã chốt</span></div><p>Máy này hiện có ${count(result.currentOrders)} đơn. Sau khi nhập, toàn bộ dữ liệu nghiệp vụ hiện tại sẽ được thay bằng file này; tài khoản đăng nhập vẫn giữ nguyên.</p><button id="commitPortable" class="button danger">Thay dữ liệu trên máy này</button>`);
+      previewBox('#portablePreview', `<strong>Dữ liệu từ ${escape(state.portableFile.name)}</strong><div class="preview-stats"><span><b>${count(result.staff)}</b>nhân viên</span><span><b>${count(result.periods)}</b>khoảng lịch</span><span><b>${count(result.orders)}</b>đơn</span><span><b>${count(result.manual)}</b>đơn chỉnh tay</span><span><b>${count(result.closures)}</b>kỳ đã chốt</span></div><p>Máy này hiện có ${count(result.currentOrders)} đơn. Sau khi nhập, toàn bộ dữ liệu nghiệp vụ hiện tại sẽ được thay bằng file này.</p><button id="commitPortable" class="button danger">Thay dữ liệu trên máy này</button>`);
     } catch (error) { fail(error); }
   });
   $('#portablePreview').addEventListener('click', async event => {
