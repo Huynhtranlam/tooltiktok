@@ -1,4 +1,4 @@
-"""Pure scheduling, CSV, and commission rules for the shared application."""
+"""Pure scheduling, CSV, and commission rules for each local installation."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import re
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from itertools import combinations
 
 
 TIME_RE = re.compile(r"^(\d{2}):(\d{2})$")
@@ -53,6 +54,95 @@ def _intervals_for(schedule: dict, day: date) -> list[tuple[int, int, dict]]:
     return result
 
 
+def _shared_pair(left: dict, right: dict) -> bool:
+    def confirmed(owner, partner):
+        return any(isinstance(link, dict) and link.get("shiftId") == partner["id"]
+                   and link.get("ownerStaffId") == owner["staffId"] and link.get("staffId") == partner["staffId"]
+                   for link in owner.get("sharedWith", []))
+    return confirmed(left, right) or confirmed(right, left)
+
+
+def _valid_shared_links(shift: dict) -> bool:
+    links = shift.get("sharedWith", [])
+    return isinstance(links, list) and all(
+        isinstance(link, dict) and isinstance(link.get("shiftId"), str) and link["shiftId"]
+        and link["shiftId"] != shift.get("id") and type(link.get("ownerStaffId")) is int
+        and type(link.get("staffId")) is int for link in links)
+
+
+def _overlap_pairs(intervals: list[tuple[int, int, dict]]):
+    for left, right in combinations(intervals, 2):
+        if max(left[0], right[0]) < min(left[1], right[1]):
+            yield left, right
+
+
+def approve_shared_overlaps(schedule: dict, days) -> None:
+    """Record the user's confirmation on every overlapping pair of shifts."""
+    for day in days:
+        for left, right in _overlap_pairs(_intervals_for(schedule, day)):
+            a, b = left[2], right[2]
+            if a["staffId"] == b["staffId"]:
+                continue
+            for owner, partner in ((a, b), (b, a)):
+                links = owner.setdefault("sharedWith", [])
+                link = {"shiftId": partner["id"], "ownerStaffId": owner["staffId"], "staffId": partner["staffId"]}
+                if link not in links:
+                    links.append(link)
+
+
+def _overlap_errors(schedule: dict, days) -> list[dict]:
+    pending = []
+    seen_pairs = set()
+    for day in sorted(days):
+        intervals = _intervals_for(schedule, day)
+        for group in combinations(intervals, 3):
+            if max(item[0] for item in group) < min(item[1] for item in group):
+                return [{"path": "overlap", "message": f"Ngày {day:%d/%m/%Y}: tối đa hai nhân viên được live chung cùng lúc."}]
+        pairs = list(_overlap_pairs(intervals))
+        for left, right in pairs:
+            a, b = left[2], right[2]
+            if a["staffId"] == b["staffId"]:
+                return [{"path": "overlap", "message": f"Ngày {day:%d/%m/%Y}: một nhân viên có hai ca chồng giờ."}]
+        for left, right in pairs:
+            a, b = left[2], right[2]
+            if not _shared_pair(a, b):
+                pair = tuple(sorted((a["id"], b["id"])))
+                if pair not in seen_pairs:
+                    pending.append({"path": "overlap", "code": "confirm_shared", "staffIds": [a["staffId"], b["staffId"]],
+                                    "message": f"Ngày {day:%d/%m/%Y}: hai ca chồng giờ. Xác nhận live chung để chia doanh thu 50/50."})
+                    seen_pairs.add(pair)
+    return pending
+
+
+def namespace_override_shifts(day: date, shifts):
+    """Keep one-day shift IDs distinct from recurring shifts across midnight."""
+    if not isinstance(shifts, list):
+        return shifts
+    prefix = f"day-{day.isoformat()}-"
+    ids = {shift["id"]: shift["id"] if shift["id"].startswith(prefix) else prefix + shift["id"]
+           for shift in shifts if isinstance(shift, dict) and isinstance(shift.get("id"), str) and shift["id"]}
+    for shift in shifts:
+        if isinstance(shift, dict) and shift.get("id") in ids:
+            shift["id"] = ids[shift["id"]]
+            if isinstance(shift.get("sharedWith"), list):
+                for link in shift["sharedWith"]:
+                    if isinstance(link, dict) and isinstance(link.get("shiftId"), str):
+                        link["shiftId"] = ids.get(link["shiftId"], link["shiftId"])
+    return shifts
+
+
+def schedule_days(schedule: dict) -> set[date]:
+    days: set[date] = set()
+    for period in schedule["periods"]:
+        first, last = date.fromisoformat(period["start"]), date.fromisoformat(period["end"])
+        for delta in range((last - first).days + 2):
+            days.add(first + timedelta(days=delta))
+    for key in schedule.get("overrides", {}):
+        day = date.fromisoformat(key)
+        days.update((day, day + timedelta(days=1)))
+    return days
+
+
 def validate_schedule(schedule: dict, staff_ids: set[int]) -> list[dict]:
     """Return field-addressable errors, including cross-midnight conflicts."""
     errors: list[dict] = []
@@ -80,6 +170,8 @@ def validate_schedule(schedule: dict, staff_ids: set[int]) -> list[dict]:
             if not sid or sid in seen_ids:
                 errors.append({"path": spath, "message": "Mỗi ca cần một mã riêng."})
             seen_ids.add(sid)
+            if not _valid_shared_links(shift):
+                errors.append({"path": spath + ".sharedWith", "message": "Danh sách ca live chung không hợp lệ."})
             if shift.get("staffId") not in staff_ids:
                 errors.append({"path": spath + ".staffId", "message": f"Khoảng {pi + 1}, ca {si + 1}: chọn nhân viên."})
             days = shift.get("days")
@@ -107,26 +199,11 @@ def validate_schedule(schedule: dict, staff_ids: set[int]) -> list[dict]:
             errors.append({"path": "periods", "message": f"Khoảng {left['start']}–{left['end']} chồng ngày với {right['start']}–{right['end']}."})
     if errors:
         return errors
-    dates: set[date] = set()
-    for period in periods:
-        first, last = date.fromisoformat(period["start"]), date.fromisoformat(period["end"])
-        for delta in range((last - first).days + 2):
-            dates.add(first + timedelta(days=delta))
-    for key in schedule.get("overrides", {}):
-        try:
-            dates.add(date.fromisoformat(key))
-            dates.add(date.fromisoformat(key) + timedelta(days=1))
-        except ValueError:
-            errors.append({"path": "overrides", "message": f"Ngày đổi ca {key} không hợp lệ."})
-    if errors:
-        return errors
-    for day in sorted(dates):
-        intervals = sorted(_intervals_for(schedule, day), key=lambda x: x[0])
-        for left, right in zip(intervals, intervals[1:]):
-            if right[0] < left[1]:
-                errors.append({"path": "overlap", "message": f"Ngày {day:%d/%m/%Y}: ca {left[2]['start']}–{left[2]['end']} chồng ca {right[2]['start']}–{right[2]['end']}."})
-                return errors
-    return errors
+    try:
+        dates = schedule_days(schedule)
+    except ValueError:
+        return [{"path": "overrides", "message": "Ngày đổi ca không hợp lệ."}]
+    return _overlap_errors(schedule, dates)
 
 
 def validate_day_shifts(day: date, shifts: list[dict], schedule: dict, staff_ids: set[int]) -> list[dict]:
@@ -134,9 +211,15 @@ def validate_day_shifts(day: date, shifts: list[dict], schedule: dict, staff_ids
     # Check the new day's fields and the adjacent overnight boundaries using the same rules.
     if not isinstance(shifts, list):
         return [{"path": "shifts", "message": "Danh sách ca không hợp lệ."}]
+    seen_ids = set()
     for i, shift in enumerate(shifts):
+        if not isinstance(shift, dict) or not isinstance(shift.get("id"), str) or not shift["id"] or shift["id"] in seen_ids:
+            return [{"path": f"shifts.{i}.id", "message": "Mỗi ca trong ngày cần một mã riêng."}]
+        seen_ids.add(shift["id"])
         if shift.get("staffId") not in staff_ids:
             return [{"path": f"shifts.{i}.staffId", "message": f"Ca {i + 1}: chọn nhân viên."}]
+        if not _valid_shared_links(shift):
+            return [{"path": f"shifts.{i}.sharedWith", "message": "Danh sách ca live chung không hợp lệ."}]
         try:
             start, end = minute(shift["start"]), minute(shift["end"])
             offset = shift["endDay"]
@@ -144,12 +227,7 @@ def validate_day_shifts(day: date, shifts: list[dict], schedule: dict, staff_ids
                 raise ValueError()
         except (KeyError, ValueError):
             return [{"path": f"shifts.{i}.end", "message": f"Ca {i + 1}: chọn khoảng giờ hợp lệ, tối đa 24 giờ."}]
-    for check_day in (day, day + timedelta(days=1)):
-        intervals = sorted(_intervals_for(temporary, check_day), key=lambda x: x[0])
-        for left, right in zip(intervals, intervals[1:]):
-            if right[0] < left[1]:
-                return [{"path": "overlap", "message": f"Ngày {check_day:%d/%m/%Y}: hai ca chồng giờ."}]
-    return []
+    return _overlap_errors(temporary, (day, day + timedelta(days=1)))
 
 
 def classify(order: dict, schedule: dict, manual: dict[str, int]) -> dict:
@@ -160,7 +238,8 @@ def classify(order: dict, schedule: dict, manual: dict[str, int]) -> dict:
     if str(order.get("channel", "")).strip().upper() != "LIVE":
         return {"kind": "excluded", "staffId": None, "reason": "Không thuộc kênh LIVE"}
     if order["id"] in manual:
-        return {"kind": "assigned", "staffId": manual[order["id"]], "reason": "Gán thủ công"}
+        sid = manual[order["id"]]
+        return {"kind": "assigned", "staffId": sid, "shares": [{"staffId": sid, "fraction": 1}], "reason": "Gán thủ công"}
     created = datetime.fromisoformat(order["createdAt"])
     offset = created.hour * 60 + created.minute + created.second / 60
     matches = []
@@ -168,7 +247,12 @@ def classify(order: dict, schedule: dict, manual: dict[str, int]) -> dict:
         if start <= offset < end:
             matches.append(shift)
     if len(matches) == 1:
-        return {"kind": "assigned", "staffId": matches[0]["staffId"], "reason": "Theo lịch live"}
+        sid = matches[0]["staffId"]
+        return {"kind": "assigned", "staffId": sid, "shares": [{"staffId": sid, "fraction": 1}], "reason": "Theo lịch live"}
+    if len(matches) == 2 and matches[0]["staffId"] != matches[1]["staffId"] and _shared_pair(*matches):
+        return {"kind": "assigned", "staffId": None,
+                "shares": [{"staffId": shift["staffId"], "fraction": 0.5} for shift in matches],
+                "reason": "Live chung · chia doanh thu 50/50"}
     return {"kind": "review", "staffId": None, "reason": "Ca live chồng nhau" if matches else "Ngoài khung giờ live"}
 
 
@@ -258,8 +342,8 @@ def parse_csv(data: bytes) -> tuple[list[dict], dict]:
 
 
 def report(orders: list[dict], schedule: dict, manual: dict[str, int], rates: dict[int, list[dict]], staff: dict[int, str], start: str, end: str) -> dict:
-    by_staff = defaultdict(lambda: {"orders": 0, "qty": Decimal(0), "revenue": Decimal(0), "commission": Decimal(0)})
-    products = defaultdict(lambda: {"orders": set(), "qty": Decimal(0), "revenue": Decimal(0)})
+    by_staff = defaultdict(lambda: {"orders": Decimal(0), "qty": Decimal(0), "revenue": Decimal(0), "commission": Decimal(0)})
+    products = defaultdict(lambda: {"orders": {}, "qty": Decimal(0), "revenue": Decimal(0)})
     details, review = [], []
     for order in orders:
         day = (order.get("createdAt") or "")[:10]
@@ -271,26 +355,32 @@ def report(orders: list[dict], schedule: dict, manual: dict[str, int], rates: di
         if assignment["kind"] != "assigned":
             review.append(detail)
             continue
-        sid = assignment["staffId"]
-        effective = Decimal(str(next((r["rate"] for r in reversed(rates.get(sid, [])) if r["effectiveFrom"] <= day), 0)))
-        by_staff[sid]["orders"] += 1
-        for line in order["lines"]:
-            qty, amount = Decimal(str(line["qty"])), Decimal(str(line["revenue"]))
-            by_staff[sid]["qty"] += qty
-            by_staff[sid]["revenue"] += amount
-            by_staff[sid]["commission"] += amount * effective / Decimal(100)
-            key = (sid, line["product"] or "Sản phẩm không tên")
-            products[key]["orders"].add(order["id"])
-            products[key]["qty"] += qty
-            products[key]["revenue"] += amount
-        detail["rate"] = float(effective)
+        detail["rates"] = []
+        for share in assignment["shares"]:
+            sid, fraction = share["staffId"], Decimal(str(share["fraction"]))
+            effective = Decimal(str(next((r["rate"] for r in reversed(rates.get(sid, [])) if r["effectiveFrom"] <= day), 0)))
+            by_staff[sid]["orders"] += fraction
+            for line in order["lines"]:
+                qty, amount = Decimal(str(line["qty"])) * fraction, Decimal(str(line["revenue"])) * fraction
+                by_staff[sid]["qty"] += qty
+                by_staff[sid]["revenue"] += amount
+                by_staff[sid]["commission"] += amount * effective / Decimal(100)
+                key = (sid, line["product"] or "Sản phẩm không tên")
+                products[key]["orders"][order["id"]] = fraction
+                products[key]["qty"] += qty
+                products[key]["revenue"] += amount
+            detail["rates"].append({"staffId": sid, "rate": float(effective)})
+        if assignment["staffId"] is not None:
+            detail["rate"] = detail["rates"][0]["rate"]
     staff_rows = [{"staffId": sid, "staff": staff.get(sid, "Nhân viên đã xóa"),
-                   "orders": values["orders"], "qty": float(values["qty"]),
+                   "orders": float(values["orders"]), "qty": float(values["qty"]),
                    "revenue": float(values["revenue"]), "commission": float(values["commission"])}
                   for sid, values in by_staff.items()]
     staff_rows.sort(key=lambda r: -r["revenue"])
     product_rows = [{"staffId": sid, "staff": staff.get(sid, "Nhân viên đã xóa"), "product": name,
-                     "orders": len(values["orders"]), "qty": float(values["qty"]), "revenue": float(values["revenue"])}
+                     "orders": float(sum(values["orders"].values())), "qty": float(values["qty"]), "revenue": float(values["revenue"])}
                     for (sid, name), values in products.items()]
     product_rows.sort(key=lambda r: (r["staff"], -r["revenue"]))
-    return {"staff": staff_rows, "products": product_rows, "orders": details, "review": review, "totals": {"orders": sum(r["orders"] for r in staff_rows), "qty": sum(r["qty"] for r in staff_rows), "revenue": sum(r["revenue"] for r in staff_rows), "commission": sum(r["commission"] for r in staff_rows), "review": len(review)}}
+    totals = {key: float(sum(values[key] for values in by_staff.values())) for key in ("orders", "qty", "revenue", "commission")}
+    totals["review"] = len(review)
+    return {"staff": staff_rows, "products": product_rows, "orders": details, "review": review, "totals": totals}

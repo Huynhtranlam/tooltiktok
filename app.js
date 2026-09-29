@@ -107,7 +107,7 @@
   }
   function shiftMarkup(shift, index, weekly = true, readOnly = false) {
     const disabled = readOnly || !isAdmin() ? 'disabled' : '';
-    return `<div class="shift-row" data-shift="${escape(shift.id)}"><div class="shift-fields"><label>Nhân viên<select data-field="staffId" ${disabled}>${staffOptions(shift.staffId)}</select></label><label>Bắt đầu (24 giờ)${timePicker(shift.start,'start',disabled)}</label><label>Kết thúc (24 giờ)${timePicker(shift.end,'end',disabled)}</label><label>Ngày kết thúc<select data-field="endDay" ${disabled}><option value="0" ${shift.endDay === 0 ? 'selected' : ''}>Hôm nay</option><option value="1" ${shift.endDay === 1 ? 'selected' : ''}>Hôm sau</option></select></label>${readOnly ? '' : `<button class="button danger small" data-remove-shift="${index}" ${disabled} aria-label="Xóa ca ${index + 1}">Xóa ca</button>`}</div>${weekly ? `<fieldset class="day-picker"><legend>Ngày áp dụng</legend>${weekdays.map((day, number) => `<label class="day-pill"><input type="checkbox" data-day="${number}" ${shift.days?.includes(number) ? 'checked' : ''} ${disabled}>${day}</label>`).join('')}</fieldset>` : ''}</div>`;
+    return `<div class="shift-row" data-shift="${escape(shift.id)}" data-shared-with="${escape(JSON.stringify(shift.sharedWith || []))}"><div class="shift-fields"><label>Nhân viên<select data-field="staffId" ${disabled}>${staffOptions(shift.staffId)}</select></label><label>Bắt đầu (24 giờ)${timePicker(shift.start,'start',disabled)}</label><label>Kết thúc (24 giờ)${timePicker(shift.end,'end',disabled)}</label><label>Ngày kết thúc<select data-field="endDay" ${disabled}><option value="0" ${shift.endDay === 0 ? 'selected' : ''}>Hôm nay</option><option value="1" ${shift.endDay === 1 ? 'selected' : ''}>Hôm sau</option></select></label>${readOnly ? '' : `<button class="button danger small" data-remove-shift="${index}" ${disabled} aria-label="Xóa ca ${index + 1}">Xóa ca</button>`}</div>${weekly ? `<fieldset class="day-picker"><legend>Ngày áp dụng</legend>${weekdays.map((day, number) => `<label class="day-pill"><input type="checkbox" data-day="${number}" ${shift.days?.includes(number) ? 'checked' : ''} ${disabled}>${day}</label>`).join('')}</fieldset>` : ''}${shift.sharedWith?.length ? '<p class="muted small-text">✓ Đã xác nhận live chung khi trùng giờ</p>' : ''}</div>`;
   }
   function readShifts(container, weekly) {
     return $$('[data-shift]', container).map(row => ({id:row.dataset.shift,
@@ -115,6 +115,7 @@
       start:row.querySelector('[data-field="startHour"]').value + ':' + row.querySelector('[data-field="startMinute"]').value,
       end:row.querySelector('[data-field="endHour"]').value + ':' + row.querySelector('[data-field="endMinute"]').value,
       endDay:Number(row.querySelector('[data-field="endDay"]').value),
+      sharedWith:JSON.parse(row.dataset.sharedWith || '[]'),
       ...(weekly ? {days:$$('[data-day]:checked', row).map(el => Number(el.dataset.day))} : {})
     }));
   }
@@ -138,7 +139,7 @@
     const period = state.periodDraft[state.activePeriod];
     $('#weekPreview').innerHTML = weekdays.map((day, number) => {
       const slots = (period?.shifts || []).filter(shift => shift.days?.includes(number)).sort((a,b) => a.start.localeCompare(b.start));
-      return `<div class="week-day"><b>${day}</b>${slots.length ? slots.map(shift => `<div class="week-shift"><strong>${escape(staffName(shift.staffId))}</strong><br>${escape(shift.start)} → ${escape(shift.end)}${shift.endDay ? ' hôm sau' : ''}</div>`).join('') : '<small>Không có ca</small>'}</div>`;
+      return `<div class="week-day"><b>${day}</b>${slots.length ? slots.map(shift => `<div class="week-shift"><strong>${escape(staffName(shift.staffId))}</strong><br>${escape(shift.start)} → ${escape(shift.end)}${shift.endDay ? ' hôm sau' : ''}${shift.sharedWith?.length ? '<br><small>Live chung khi trùng giờ</small>' : ''}</div>`).join('') : '<small>Không có ca</small>'}</div>`;
     }).join('');
   }
   function renderSchedule() {
@@ -168,10 +169,21 @@
   async function saveSchedule() {
     syncPeriod(); clearTimeout(state.draftTimer);
     try {
-      await api('/api/schedule', {method:'PUT', body:json({baseVersion:state.data.schedule.version, periods:state.periodDraft})});
+      const payload = {baseVersion:state.data.schedule.version, periods:state.periodDraft};
+      try { await api('/api/schedule', {method:'PUT', body:json(payload)}); }
+      catch (error) {
+        const overlaps = error.fields?.filter(field => field.code === 'confirm_shared') || [];
+        if (!overlaps.length) throw error;
+        const pairs = overlaps.map(field => `${field.staffIds.map(staffName).join(' và ')} · ${field.message.split(':')[0]}`).join('\n');
+        if (!confirm(`Các cặp ca sau trùng giờ:\n${pairs}\n\nXác nhận LIVE CHUNG? Đơn tạo trong phần giờ trùng sẽ chia doanh thu 50/50; hoa hồng mỗi người tính trên phần doanh thu đó.`)) {
+          $('#draftStatus').textContent = 'Lịch chưa lưu vì chưa xác nhận live chung.';
+          notice('Chưa lưu lịch. Bạn có thể chỉnh lại giờ hoặc nhân viên.', true); return;
+        }
+        await api('/api/schedule', {method:'PUT', body:json({...payload, confirmShared:true})});
+      }
       $('#scheduleErrors').classList.add('hide'); notice('Đã lưu lịch trên máy này. Đơn chưa chốt được tính lại theo lịch mới.');
       await loadState(); await loadReport();
-    } catch (error) { if (error.fields) showScheduleErrors(error.fields); else fail(error); }
+    } catch (error) { $('#draftStatus').textContent = 'Lịch chưa lưu'; if (error.fields) showScheduleErrors(error.fields); else fail(error); }
   }
   function renderOverride() {
     const day = $('#overrideDate').value || today();
@@ -189,7 +201,17 @@
   async function saveOverride() {
     const day = $('#overrideDate').value;
     try {
-      await api(`/api/overrides/${day}`, {method:'PUT', body:json({shifts:readShifts($('#overrideShifts'),false)})});
+      const payload = {shifts:readShifts($('#overrideShifts'),false)};
+      try { await api(`/api/overrides/${day}`, {method:'PUT', body:json(payload)}); }
+      catch (error) {
+        const overlaps = error.fields?.filter(field => field.code === 'confirm_shared') || [];
+        if (!overlaps.length) throw error;
+        const pairs = overlaps.map(field => `${field.staffIds.map(staffName).join(' và ')} · ${field.message.split(':')[0]}`).join('\n');
+        if (!confirm(`Các cặp ca sau trùng giờ:\n${pairs}\n\nXác nhận LIVE CHUNG và chia doanh thu 50/50 trong phần giờ trùng?`)) {
+          notice('Chưa lưu lịch ngày. Bạn có thể chỉnh lại giờ hoặc nhân viên.', true); return;
+        }
+        await api(`/api/overrides/${day}`, {method:'PUT', body:json({...payload, confirmShared:true})});
+      }
       state.overrideEditing = false; $('#overrideErrors').classList.add('hide'); notice(`Đã lưu lịch riêng ngày ${dateText(day)}.`);
       await loadState(); await loadReport();
     } catch (error) {
@@ -198,14 +220,18 @@
     }
   }
 
-  function orderStatusText(order) { const item = order.assignment; return `<span class="status-chip ${item.kind}">${escape(item.kind === 'assigned' ? 'Đã gán' : item.kind === 'review' ? 'Cần xử lý' : 'Không tính')}</span>`; }
+  function assignedStaffText(assignment) {
+    const shares = assignment.shares || [];
+    return shares.length > 1 ? `${shares.map(item => staffName(item.staffId)).join(' + ')} (50/50)` : assignment.staffId ? staffName(assignment.staffId) : '—';
+  }
+  function orderStatusText(order) { const item = order.assignment; return `<span class="status-chip ${item.kind}">${escape(item.kind === 'assigned' ? item.shares?.length > 1 ? 'Live chung' : 'Đã gán' : item.kind === 'review' ? 'Cần xử lý' : 'Không tính')}</span>`; }
   function renderOrders() {
     if (!state.report) return;
     const filter = $('#orderStatus').value, query = $('#orderSearch').value.trim().toLocaleLowerCase('vi');
     const rows = state.report.orders.filter(order => (filter === 'all' || order.assignment.kind === filter) && (!query || order.id.toLocaleLowerCase('vi').includes(query) || order.lines.some(line => String(line.product || '').toLocaleLowerCase('vi').includes(query))));
     $('#orderResultCount').textContent = `${count(rows.length)} đơn`;
     $('#orderLimit').textContent = rows.length > 200 ? `Đang hiển thị 200/${rows.length} đơn. Dùng ô tìm kiếm để thu hẹp.` : '';
-    $('#orderTable').innerHTML = rows.slice(0,200).map(order => `<tr><td>${escape((order.createdAt || '').replace('T',' ').slice(0,16))}</td><td><strong>${escape(order.id)}</strong></td><td>${count(order.lines.reduce((total,line) => total + line.qty,0))} SP · ${escape(order.lines[0]?.product || '—')}${order.lines.length > 1 ? ` +${order.lines.length - 1}` : ''}</td><td>${escape(order.channel || 'Trống')}</td><td>${escape(order.assignment.staffId ? staffName(order.assignment.staffId) : '—')}</td><td>${orderStatusText(order)} <small class="muted">${escape(order.assignment.reason)}</small></td><td>${isAdmin() && order.assignment.kind !== 'excluded' ? `<button class="button small" data-adjust="${escape(order.id)}">Điều chỉnh</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="empty-cell">Không có đơn phù hợp.</td></tr>';
+    $('#orderTable').innerHTML = rows.slice(0,200).map(order => `<tr><td>${escape((order.createdAt || '').replace('T',' ').slice(0,16))}</td><td><strong>${escape(order.id)}</strong></td><td>${count(order.lines.reduce((total,line) => total + line.qty,0))} SP · ${escape(order.lines[0]?.product || '—')}${order.lines.length > 1 ? ` +${order.lines.length - 1}` : ''}</td><td>${escape(order.channel || 'Trống')}</td><td>${escape(assignedStaffText(order.assignment))}</td><td>${orderStatusText(order)} <small class="muted">${escape(order.assignment.reason)}</small></td><td>${isAdmin() && order.assignment.kind !== 'excluded' ? `<button class="button small" data-adjust="${escape(order.id)}">Điều chỉnh</button>` : ''}</td></tr>`).join('') || '<tr><td colspan="7" class="empty-cell">Không có đơn phù hợp.</td></tr>';
   }
   function openAssignment(orderId) {
     const order = state.report.orders.find(row => row.id === orderId); if (!order) return;
@@ -298,7 +324,7 @@
     catch (error) { fail(error); }
   });
   $('#clearAssignment').addEventListener('click', async () => { if (!state.activeOrder) return; try { await api(`/api/manual/${encodeURIComponent(state.activeOrder.id)}`,{method:'DELETE'}); $('#assignmentPanel').classList.add('hide'); notice('Đã trở về gán theo lịch.'); await loadReport(); } catch (error) { fail(error); } });
-  $('#exportOrders').addEventListener('click', () => { if (!state.report) return; downloadCsv('don-live.csv',['Mã đơn','Giờ tạo','Kênh','Trạng thái gán','Nhân viên','Lý do','Sản phẩm','Số lượng','Doanh số'],state.report.orders.flatMap(order => order.lines.map(line => [order.id,order.createdAt,order.channel,order.assignment.kind,order.assignment.staffId ? staffName(order.assignment.staffId) : '',order.assignment.reason,line.product,line.qty,line.revenue]))); });
+  $('#exportOrders').addEventListener('click', () => { if (!state.report) return; downloadCsv('don-live.csv',['Mã đơn','Giờ tạo','Kênh','Trạng thái gán','Nhân viên','Lý do','Sản phẩm','Số lượng gốc','Doanh số gốc','Tỷ lệ chia','Doanh số phân bổ'],state.report.orders.flatMap(order => order.lines.flatMap(line => (order.assignment.shares?.length ? order.assignment.shares : [null]).map(share => [order.id,order.createdAt,order.channel,order.assignment.kind,share ? staffName(share.staffId) : '',order.assignment.reason,line.product,line.qty,line.revenue,share ? `${share.fraction * 100}%` : '',share ? Number(line.revenue) * share.fraction : 0])))); });
 
   $('#rateList').addEventListener('click', async event => { const button = event.target.closest('[data-save-rate]'); if (!button) return; const row = button.closest('[data-rate-staff]'); const inputs = $$('input',row); try { await api('/api/rates',{method:'POST',body:json({staffId:Number(button.dataset.saveRate),rate:Number(inputs[0].value),effectiveFrom:inputs[1].value})}); notice('Đã lưu tỷ lệ và ngày hiệu lực. Kỳ đã chốt không đổi.'); await loadState(); await loadReport(); } catch (error) { fail(error); } });
   $('#closePayroll').addEventListener('click', async () => { const from = $('#payrollFrom').value, to = $('#payrollTo').value; if (!confirm(`Chốt hoa hồng từ ${dateText(from)} đến ${dateText(to)}? Kết quả sẽ được giữ cố định.`)) return; try { const result = await api('/api/payroll/close',{method:'POST',body:json({from,to})}); notice(`Đã chốt kỳ #${result.id}: ${money(result.totals.commission)} hoa hồng.`); await loadState(); } catch (error) { fail(error); } });

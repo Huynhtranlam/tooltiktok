@@ -65,6 +65,108 @@ def test_seeded_weekdays_match_the_three_schedule_photos(shared):
         assert third["p3-hao"]["days"] == [0, 2, 3, 5, 6]
 
 
+def test_confirmed_shared_live_splits_only_orders_in_overlapping_minutes(shared):
+    client = shared.test_client(); headers = login(client)
+    with shared.app_context():
+        staff_ids = {r["name"]: r["id"] for r in get_db().execute("SELECT id,name FROM staff")}
+    schedule = client.get("/api/state").json["schedule"]
+    periods = copy.deepcopy(schedule["periods"])
+    periods[0]["shifts"].append({"id":"shared-vy","staffId":staff_ids["VY"],"start":"22:00","end":"23:00","endDay":0,"days":[0]})
+    payload = {"baseVersion":schedule["version"],"periods":periods}
+    pending = client.put("/api/schedule",json=payload,headers=headers)
+    assert pending.status_code == 422 and pending.json["fields"][0]["code"] == "confirm_shared"
+    assert client.get("/api/state").json["schedule"]["version"] == schedule["version"]
+    saved = client.put("/api/schedule",json={**payload,"confirmShared":True},headers=headers)
+    assert saved.status_code == 200, saved.json
+    assert any(link["shiftId"] == "p1-hao" for link in next(s for s in saved.json["periods"][0]["shifts"] if s["id"] == "shared-vy")["sharedWith"])
+    boundary_order = {"id":"BOUNDARY","createdAt":"2026-09-20T22:00:00","status":"Open","channel":"LIVE","refund":0,"lines":[]}
+    assert len(classify(boundary_order,saved.json,{})["shares"]) == 2
+    boundary_order["createdAt"] = "2026-09-20T23:00:00"
+    assert len(classify(boundary_order,saved.json,{})["shares"]) == 1
+    assert client.post("/api/rates",json={"staffId":staff_ids["HÀO"],"effectiveFrom":"2026-09-01","rate":10},headers=headers).status_code == 200
+    assert client.post("/api/rates",json={"staffId":staff_ids["VY"],"effectiveFrom":"2026-09-01","rate":20},headers=headers).status_code == 200
+    raw = sample_csv(
+        "BEFORE,20/09/2026 21:30:00,Product,1,100000,Open,LIVE,0",
+        "TOGETHER,20/09/2026 22:30:00,Product,1,100000,Open,LIVE,0",
+        "AFTER,20/09/2026 23:30:00,Product,1,100000,Open,LIVE,0",
+    )
+    sha = upload(client,"/api/import/preview",raw,headers).json["sha256"]
+    assert upload(client,"/api/import/commit",raw,headers,sha256=sha).status_code == 200
+    result = client.get("/api/report?from=2026-09-20&to=2026-09-20").json
+    rows = {row["staff"]: row for row in result["staff"]}
+    assert rows["HÀO"]["revenue"] == 250000 and rows["HÀO"]["commission"] == 25000
+    assert rows["VY"]["revenue"] == 50000 and rows["VY"]["commission"] == 10000
+    assert result["totals"]["orders"] == 3 and result["totals"]["revenue"] == 300000
+    assert result["totals"]["commission"] == 35000 and result["totals"]["review"] == 0
+    shared_order = next(order for order in result["orders"] if order["id"] == "TOGETHER")
+    assert shared_order["assignment"]["reason"] == "Live chung · chia doanh thu 50/50"
+    assert {part["staffId"] for part in shared_order["assignment"]["shares"]} == {staff_ids["HÀO"], staff_ids["VY"]}
+    assert sum(row["revenue"] for row in result["products"]) == 300000
+    assert client.put("/api/manual/TOGETHER",json={"staffId":staff_ids["HÀO"],"reason":"Đã đối soát lại"},headers=headers).status_code == 200
+    adjusted = client.get("/api/report?from=2026-09-20&to=2026-09-20").json
+    assert adjusted["totals"]["commission"] == 30000
+    assert client.delete("/api/manual/TOGETHER",headers=headers).status_code == 200
+    closed = client.post("/api/payroll/close",json={"from":"2026-09-20","to":"2026-09-20"},headers=headers)
+    assert closed.status_code == 201 and closed.json["totals"]["commission"] == 35000
+
+
+def test_all_new_overlap_pairs_are_listed_before_confirmation(shared):
+    client = shared.test_client(); headers = login(client)
+    schedule = client.get("/api/state").json["schedule"]
+    periods = copy.deepcopy(schedule["periods"])
+    periods[0]["shifts"].extend([
+        {"id":"shared-morning","staffId":4,"start":"11:00","end":"12:00","endDay":0,"days":[0]},
+        {"id":"shared-evening","staffId":2,"start":"22:00","end":"23:00","endDay":0,"days":[0]},
+    ])
+    payload = {"baseVersion":schedule["version"],"periods":periods}
+    pending = client.put("/api/schedule",json=payload,headers=headers)
+    assert pending.status_code == 422
+    assert len(pending.json["fields"]) == 2
+    assert all(field["code"] == "confirm_shared" for field in pending.json["fields"])
+    saved = client.put("/api/schedule",json={**payload,"confirmShared":True},headers=headers)
+    assert saved.status_code == 200, saved.json
+    changed = copy.deepcopy(saved.json["periods"])
+    next(shift for shift in changed[0]["shifts"] if shift["id"] == "shared-evening")["staffId"] = 3
+    again = client.put("/api/schedule",json={"baseVersion":saved.json["version"],"periods":changed},headers=headers)
+    assert again.status_code == 422 and again.json["fields"][0]["code"] == "confirm_shared"
+
+
+def test_shared_live_same_staff_and_three_people_still_blocked(shared):
+    client = shared.test_client(); headers = login(client)
+    schedule = client.get("/api/state").json["schedule"]
+    periods = copy.deepcopy(schedule["periods"])
+    periods[0]["shifts"].append({"id":"same-person","staffId":5,"start":"22:00","end":"23:00","endDay":0,"days":[0]})
+    result = client.put("/api/schedule",json={"baseVersion":schedule["version"],"periods":periods,"confirmShared":True},headers=headers)
+    assert result.status_code == 422 and "một nhân viên" in result.json["fields"][0]["message"]
+    periods[0]["shifts"][-1]["staffId"] = 2
+    periods[0]["shifts"].append({"id":"third-person","staffId":3,"start":"22:15","end":"22:45","endDay":0,"days":[0]})
+    result = client.put("/api/schedule",json={"baseVersion":schedule["version"],"periods":periods,"confirmShared":True},headers=headers)
+    assert result.status_code == 422 and "tối đa hai" in result.json["fields"][0]["message"]
+
+
+def test_day_override_can_share_with_previous_nights_shift_and_export(shared, tmp_path):
+    client = shared.test_client(); headers = login(client)
+    shift = {"id":"early-vy","staffId":2,"start":"00:30","end":"02:00","endDay":0}
+    endpoint = "/api/overrides/2026-09-21"
+    pending = client.put(endpoint,json={"shifts":[shift]},headers=headers)
+    assert pending.status_code == 422 and pending.json["fields"][0]["code"] == "confirm_shared"
+    saved = client.put(endpoint,json={"shifts":[shift],"confirmShared":True},headers=headers)
+    assert saved.status_code == 200, saved.json
+    current = client.get("/api/state").json["schedule"]
+    override = current["overrides"]["2026-09-21"][0]
+    assert override["id"].startswith("day-2026-09-21-") and any(link["shiftId"] == "p1-hao" for link in override["sharedWith"])
+    order = {"id":"NIGHT","createdAt":"2026-09-21T00:45:00","status":"Open","channel":"LIVE","refund":0,"lines":[{"product":"P","qty":1,"revenue":"100001"}]}
+    assignment = classify(order,current,{})
+    assert assignment["kind"] == "assigned" and [part["fraction"] for part in assignment["shares"]] == [0.5,0.5]
+    exported = client.get("/api/backup").data
+    target_app = create_app({"TESTING":True,"SECRET_KEY":"different","DATABASE_PATH":str(tmp_path / "copy" / "db.sqlite3"),"BACKUP_DIR":str(tmp_path / "copy" / "backups")})
+    target = target_app.test_client(); target_headers = login(target)
+    preview = upload(target,"/api/backup/preview",exported,target_headers)
+    assert preview.status_code == 200, preview.json
+    assert upload(target,"/api/backup/commit",exported,target_headers,sha256=preview.json["sha256"]).status_code == 200
+    assert classify(order,target.get("/api/state").json["schedule"],{})["kind"] == "assigned"
+
+
 def test_two_clients_share_saved_schedule_and_csrf(shared):
     first, second = shared.test_client(), shared.test_client()
     h1, h2 = login(first), login(second)

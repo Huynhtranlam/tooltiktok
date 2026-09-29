@@ -35,8 +35,8 @@ Xuất dữ liệu là thao tác thủ công. Các máy không đồng bộ tự
 
 - Gán đơn theo `Created Time` trong CSV. Giờ kết thúc không thuộc ca: HÀO 21:00–01:00 hôm sau nhận đơn 00:59:59, còn đơn 01:00:00 cần đối soát.
 - Nhập CSV có bước xem trước số đơn mới, đơn cập nhật và dòng sai. File có dòng sai không được ghi. Công cụ chỉ lưu các cột cần tính, không lưu tên, số điện thoại hay địa chỉ khách trong CSV gốc.
-- Lịch có thể chia thành các khoảng ngày. Giờ/phút chọn bằng danh sách 24 giờ và phải chọn rõ kết thúc **Hôm nay** hay **Hôm sau**. Ca chồng giờ và khoảng ngày chồng nhau không được lưu. Lịch riêng một ngày được ưu tiên hơn lịch cố định.
-- Đơn ngoài LIVE hoặc hủy/hoàn không được tính hoa hồng. Đơn LIVE ngoài ca có thể gán tay kèm lý do. Tỷ lệ hoa hồng có ngày hiệu lực; kỳ đã chốt giữ bản kết quả cố định cho đến khi được mở lại có ghi lý do.
+- Lịch có thể chia thành các khoảng ngày. Giờ/phút chọn bằng danh sách 24 giờ và phải chọn rõ kết thúc **Hôm nay** hay **Hôm sau**. Khi ca của **hai nhân viên khác nhau** chồng giờ, app liệt kê các cặp trùng và hỏi xác nhận live chung. Chọn Không thì lịch chưa được lưu; chọn Có thì đơn tạo trong đúng phần giờ trùng được chia doanh thu 50/50. Mỗi người tính hoa hồng trên nửa doanh thu theo tỷ lệ riêng của mình. Báo cáo chia cả số đơn và số lượng sản phẩm theo 0,5 để tổng không bị đếm hai lần. Một nhân viên tự trùng ca hoặc ba người cùng trùng giờ vẫn bị chặn. Khoảng ngày chồng nhau cũng bị chặn; lịch riêng một ngày được ưu tiên hơn lịch cố định.
+- Đơn ngoài LIVE hoặc hủy/hoàn không được tính hoa hồng. Đơn LIVE ngoài ca có thể gán tay kèm lý do; gán tay một đơn đang live chung sẽ chuyển toàn bộ doanh thu cho người được chọn. Tỷ lệ hoa hồng có ngày hiệu lực; kỳ đã chốt giữ bản kết quả cố định cho đến khi được mở lại có ghi lý do.
 - Báo cáo hoa hồng là số tạm tính. Cần thống nhất quy tắc làm tròn và xử lý hoàn tiền thực tế trước khi dùng làm số chi trả cuối cùng.
 
 ## Sao lưu kỹ thuật
@@ -51,4 +51,4 @@ python -m pytest -q
 node --check app.js
 ```
 
-Các kiểm thử bao phủ gán ca qua nửa đêm, ngăn ca chồng giờ, nhập CSV, phân quyền, chốt kỳ và xuất/nhập dữ liệu sang một bản cài khác.
+Các kiểm thử bao phủ gán ca qua nửa đêm, xác nhận live chung và chia doanh thu, ngăn ba ca chồng giờ, nhập CSV, chốt kỳ và xuất/nhập dữ liệu sang một bản cài khác.

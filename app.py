@@ -8,13 +8,13 @@ import json
 import os
 import secrets
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, request, send_from_directory, session
 from werkzeug.exceptions import HTTPException
 
-from domain import classify, parse_csv, report, validate_day_shifts, validate_schedule
+from domain import approve_shared_overlaps, classify, namespace_override_shifts, parse_csv, report, schedule_days, validate_day_shifts, validate_schedule
 from portable import export_data, inspect_data, restore_data
 from storage import (
     all_orders, audit, backup_if_due, close_db, current_schedule,
@@ -213,6 +213,9 @@ def create_app(test_config: dict | None = None) -> Flask:
                 return jsonify({"error": "Lịch đã được người khác cập nhật. Hãy tải lại trước khi lưu."}), 409
             proposed = {"periods": data.get("periods"), "overrides": current["overrides"]}
             errors = validate_schedule(proposed, {r["id"] for r in db.execute("SELECT id FROM staff WHERE active=1")})
+            if errors and errors[0].get("code") == "confirm_shared" and data.get("confirmShared") is True:
+                approve_shared_overlaps(proposed, schedule_days(proposed))
+                errors = validate_schedule(proposed, {r["id"] for r in db.execute("SELECT id FROM staff WHERE active=1")})
             if errors:
                 return jsonify({"error": "Lịch chưa hợp lệ.", "fields": errors}), 422
             cursor = db.execute("INSERT INTO schedule_versions(data,created_at,created_by,note) VALUES(?,?,?,?)",
@@ -242,10 +245,15 @@ def create_app(test_config: dict | None = None) -> Flask:
             parsed_day = date.fromisoformat(day)
         except ValueError:
             raise ValueError("Ngày đổi ca không hợp lệ.") from None
-        shifts = body().get("shifts")
+        data = body()
+        shifts = namespace_override_shifts(parsed_day, data.get("shifts"))
         db = get_db()
         schedule = current_schedule(db)
         errors = validate_day_shifts(parsed_day, shifts, schedule, {r["id"] for r in db.execute("SELECT id FROM staff WHERE active=1")})
+        if errors and errors[0].get("code") == "confirm_shared" and data.get("confirmShared") is True:
+            temporary = {"periods": schedule["periods"], "overrides": {**schedule["overrides"], day: shifts}}
+            approve_shared_overlaps(temporary, (parsed_day, parsed_day + timedelta(days=1)))
+            errors = validate_day_shifts(parsed_day, shifts, schedule, {r["id"] for r in db.execute("SELECT id FROM staff WHERE active=1")})
         if errors:
             return jsonify({"error": "Lịch ngày chưa hợp lệ.", "fields": errors}), 422
         before = schedule["overrides"].get(day)
